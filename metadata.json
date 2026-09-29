@@ -1,0 +1,9 @@
+{
+  "name": "Infra Polytechnic Institute - Attendance Management System",
+  "description": "Comprehensive student attendance and guardian contact management system for Infra Polytechnic Institute, integrated with Google Sheets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
+
