@@ -37,6 +37,7 @@ import {
   saveAdminEmails,
   saveDocument,
   saveDocuments,
+  waitForPendingWrites,
 } from '../services/firestoreService';
 
 interface AttendanceFilter {
@@ -133,8 +134,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus>({
     isConnected: false,
     isLoading: false,
+    isOnline: typeof navigator === 'undefined' || navigator.onLine,
+    pendingWrites: 0,
     error: null,
   });
+
+  const enqueueWrite = (write: Promise<void>) => {
+    setDatabaseStatus((current) => ({ ...current, pendingWrites: current.pendingWrites + 1, error: null }));
+    void write.then(
+      () => setDatabaseStatus((current) => ({ ...current, pendingWrites: Math.max(0, current.pendingWrites - 1) })),
+      (error: unknown) => {
+        setDatabaseStatus((current) => ({
+          ...current,
+          pendingWrites: Math.max(0, current.pendingWrites - 1),
+          error: error instanceof Error ? error.message : 'Could not sync a saved change to Firebase.',
+        }));
+        if (navigator.onLine && user) void loadDatabase(user).catch(() => undefined);
+      }
+    );
+  };
+
+  const trackExistingWrites = () => {
+    setDatabaseStatus((current) => ({ ...current, pendingWrites: current.pendingWrites + 1 }));
+    void waitForPendingWrites().then(
+      () => setDatabaseStatus((current) => ({ ...current, pendingWrites: Math.max(0, current.pendingWrites - 1) })),
+      (error: unknown) => setDatabaseStatus((current) => ({
+        ...current,
+        pendingWrites: Math.max(0, current.pendingWrites - 1),
+        error: error instanceof Error ? error.message : 'Could not sync saved changes to Firebase.',
+      }))
+    );
+  };
 
   // Admin Email Management Functions
   const isAuthorizedAdmin = useCallback((email?: string | null): boolean => {
@@ -153,7 +183,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const updated = [...authorizedAdmins, clean];
     try {
-      await saveAdminEmails(updated);
+      enqueueWrite(saveAdminEmails(updated));
       setAuthorizedAdmins(updated);
       return { success: true, message: `"${clean}" has been added as an authorized administrator.` };
     } catch (error) {
@@ -168,7 +198,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const updated = authorizedAdmins.filter((a) => a.toLowerCase() !== clean);
     try {
-      await saveAdminEmails(updated);
+      enqueueWrite(saveAdminEmails(updated));
       setAuthorizedAdmins(updated);
       return { success: true, message: `"${clean}" has been removed from authorized administrators.` };
     } catch (error) {
@@ -183,7 +213,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const loadDatabase = async (currentUser: User) => {
-    setDatabaseStatus({ isConnected: true, isLoading: true, error: null });
+    setDatabaseStatus((current) => ({ ...current, isConnected: true, isLoading: true, isOnline: navigator.onLine, error: null }));
     try {
       const [adminEmails, loadedStudents, loadedAttendance, loadedCalls, loadedSubjects, loadedDepartments] = await Promise.all([
         fetchAdminEmails(),
@@ -195,17 +225,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ]);
       const normalizedAdmins = adminEmails.map((email) => email.trim().toLowerCase());
       if (!normalizedAdmins.length && currentUser.email?.toLowerCase() === DEFAULT_ADMIN_EMAILS[0]) {
-        await saveAdminEmails(DEFAULT_ADMIN_EMAILS);
+        if (navigator.onLine) enqueueWrite(saveAdminEmails(DEFAULT_ADMIN_EMAILS));
       }
       setAuthorizedAdmins(normalizedAdmins.length ? normalizedAdmins : DEFAULT_ADMIN_EMAILS);
       const cleanStudents = loadedStudents.filter((student) => !isLegacyMockStudent(student));
       const cleanAttendance = loadedAttendance.filter((record) => !isLegacyMockAttendance(record));
       const cleanCalls = loadedCalls.filter((log) => !isLegacyMockAttendance(log));
-      await Promise.all([
-        ...loadedStudents.filter(isLegacyMockStudent).map((student) => removeDocument('students', student.id)),
-        ...loadedAttendance.filter(isLegacyMockAttendance).map((record) => removeDocument('attendance', record.id)),
-        ...loadedCalls.filter(isLegacyMockAttendance).map((log) => removeDocument('guardianCallLogs', log.id)),
-      ]);
+      if (navigator.onLine) {
+        await Promise.all([
+          ...loadedStudents.filter(isLegacyMockStudent).map((student) => removeDocument('students', student.id)),
+          ...loadedAttendance.filter(isLegacyMockAttendance).map((record) => removeDocument('attendance', record.id)),
+          ...loadedCalls.filter(isLegacyMockAttendance).map((log) => removeDocument('guardianCallLogs', log.id)),
+        ]);
+      }
       setStudents(cleanStudents);
       setAttendanceRecords(cleanAttendance);
       setCallLogs(cleanCalls);
@@ -213,20 +245,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         subject.id !== 'bteb_cst_401' && subject.code !== '66641' && subject.name !== 'Object Oriented Programming (Java/Python)'
       );
       const removedSubjects = loadedSubjects.filter((subject) => !cleanSubjects.includes(subject));
-      await Promise.all(removedSubjects.map((subject) => removeDocument('subjects', subject.id)));
+      if (navigator.onLine) await Promise.all(removedSubjects.map((subject) => removeDocument('subjects', subject.id)));
       setSubjects(cleanSubjects);
       setDepartmentDocuments(loadedDepartments);
       setDepartments(loadedDepartments.map((department) => department.name).filter(Boolean));
       if (filter.subject === 'Object Oriented Programming (Java/Python)') {
         setFilter((current) => ({ ...current, subject: '' }));
       }
-      setDatabaseStatus({ isConnected: true, isLoading: false, error: null });
+      setDatabaseStatus((current) => ({ ...current, isConnected: true, isLoading: false, isOnline: navigator.onLine, error: null }));
     } catch (error) {
-      setDatabaseStatus({
+      setDatabaseStatus((current) => ({
+        ...current,
         isConnected: false,
         isLoading: false,
+        isOnline: navigator.onLine,
         error: error instanceof Error ? error.message : 'Could not load Firebase data.',
-      });
+      }));
       throw error;
     }
   };
@@ -237,6 +271,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       (currentUser, token) => {
         setUser(currentUser);
         setAccessToken(token);
+        if (navigator.onLine) trackExistingWrites();
         void loadDatabase(currentUser).catch(() => undefined);
       },
       () => {
@@ -248,12 +283,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSubjects([]);
         setDepartments([]);
         setDepartmentDocuments([]);
-        setDatabaseStatus({ isConnected: false, isLoading: false, error: null });
+        setDatabaseStatus((current) => ({ ...current, isConnected: false, isLoading: false, error: null, pendingWrites: 0 }));
       }
     );
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const handleOffline = () => {
+      setDatabaseStatus((current) => ({ ...current, isOnline: false }));
+    };
+    const handleOnline = () => {
+      setDatabaseStatus((current) => ({ ...current, isOnline: true }));
+      if (user) {
+        trackExistingWrites();
+        void loadDatabase(user).catch(() => undefined);
+      }
+    };
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [user]);
 
   useEffect(() => {
     setFilter((current) => ({
@@ -309,7 +363,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSubjects([]);
     setDepartments([]);
     setDepartmentDocuments([]);
-    setDatabaseStatus({ isConnected: false, isLoading: false, error: null });
+    setDatabaseStatus((current) => ({ ...current, isConnected: false, isLoading: false, error: null, pendingWrites: 0 }));
   };
 
   const refreshDatabase = async () => {
@@ -319,6 +373,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const importFromGoogleSheet = async (idOrUrl: string) => {
     requireDatabaseAccess();
+    if (!navigator.onLine) throw new Error('Google Sheets import requires an internet connection.');
     let token = await getAccessToken();
     if (!token) token = await authorizeGoogleSheets();
     if (!token) throw new Error('Google Sheets access was not granted.');
@@ -327,7 +382,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const spreadsheetId = match?.[1] || idOrUrl.trim();
     if (!spreadsheetId) throw new Error('Enter a valid Google Spreadsheet URL or ID.');
 
-    setDatabaseStatus({ isConnected: true, isLoading: true, error: null });
+    setDatabaseStatus((current) => ({ ...current, isConnected: true, isLoading: true, isOnline: navigator.onLine, error: null }));
     try {
       const [importedStudents, importedAttendance, importedSubjects, importedCallLogs] = await Promise.all([
         fetchStudentsFromSheet(spreadsheetId, token),
@@ -342,23 +397,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const mergedAttendance = mergeById(attendanceRecords, cleanAttendance);
       const mergedSubjects = mergeById(subjects, importedSubjects);
       const mergedCallLogs = mergeById(callLogs, cleanCallLogs);
-      await Promise.all([
+      const writes = [
         saveDocuments('students', mergedStudents),
         saveDocuments('attendance', mergedAttendance),
         saveDocuments('subjects', mergedSubjects),
         saveDocuments('guardianCallLogs', mergedCallLogs),
-      ]);
+      ];
+      writes.forEach(enqueueWrite);
       setStudents(mergedStudents);
       setAttendanceRecords(mergedAttendance);
       setSubjects(mergedSubjects);
       setCallLogs(mergedCallLogs);
-      setDatabaseStatus({ isConnected: true, isLoading: false, error: null });
+      setDatabaseStatus((current) => ({ ...current, isConnected: true, isLoading: false, isOnline: navigator.onLine, error: null }));
     } catch (error) {
-      setDatabaseStatus({
+      setDatabaseStatus((current) => ({
+        ...current,
         isConnected: true,
         isLoading: false,
+        isOnline: navigator.onLine,
         error: error instanceof Error ? error.message : 'Google Sheet import failed.',
-      });
+      }));
       throw error;
     }
   };
@@ -377,12 +435,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const localAttendance = mergeById(attendanceRecords, readLocal<AttendanceRecord>('infra_polytechnic_attendance_v1').filter((record) => !isLegacyMockAttendance(record)));
     const localCallLogs = mergeById(callLogs, readLocal<GuardianCallLog>('infra_polytechnic_call_logs_v1').filter((log) => !isLegacyMockAttendance(log)));
     const localSubjects = mergeById(subjects, readLocal<SubjectItem>('infra_polytechnic_subjects_v1'));
-    await Promise.all([
+    const writes = [
       saveDocuments('students', localStudents),
       saveDocuments('attendance', localAttendance),
       saveDocuments('guardianCallLogs', localCallLogs),
       saveDocuments('subjects', localSubjects),
-    ]);
+    ];
+    if (!navigator.onLine) {
+      writes.forEach(enqueueWrite);
+      setStudents(localStudents);
+      setAttendanceRecords(localAttendance);
+      setCallLogs(localCallLogs);
+      setSubjects(localSubjects);
+      return;
+    }
+    await Promise.all(writes);
     localStorage.removeItem('infra_polytechnic_students_v1');
     localStorage.removeItem('infra_polytechnic_attendance_v1');
     localStorage.removeItem('infra_polytechnic_call_logs_v1');
@@ -406,7 +473,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     };
 
-    await saveDocument('students', newStudent);
+    enqueueWrite(saveDocument('students', newStudent));
     setStudents((current) => [newStudent, ...current]);
 
     return newStudent;
@@ -421,14 +488,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     };
 
-    await saveDocument('students', updatedStudent);
+    enqueueWrite(saveDocument('students', updatedStudent));
     setStudents((current) => current.map((item) => item.id === student.id ? updatedStudent : item));
   };
 
   // Student CRUD: Delete (Destructive action - requires caller to show confirmation dialog)
   const deleteStudent = async (studentId: string): Promise<void> => {
     requireDatabaseAccess();
-    await removeDocument('students', studentId);
+    enqueueWrite(removeDocument('students', studentId));
     const updatedList = students.filter((s) => s.id !== studentId);
     setStudents(updatedList);
   };
@@ -437,7 +504,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     requireDatabaseAccess();
     const uniqueIds = [...new Set(studentIds)];
     if (uniqueIds.length === 0) return;
-    await removeDocuments('students', uniqueIds);
+    enqueueWrite(removeDocuments('students', uniqueIds));
     const idsToDelete = new Set(uniqueIds);
     setStudents((current) => current.filter((student) => !idsToDelete.has(student.id)));
   };
@@ -455,7 +522,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     }));
 
-    await saveDocuments('students', formatted);
+    enqueueWrite(saveDocuments('students', formatted));
     const combined = [...formatted, ...students];
     setStudents(combined);
 
@@ -479,8 +546,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const replacedRecords = attendanceRecords.filter((existing) => records.some((record) =>
       record.studentId === existing.studentId && record.date === existing.date && record.subject === existing.subject
     ));
-    await Promise.all(replacedRecords.map((record) => removeDocument('attendance', record.id)));
-    await saveDocuments('attendance', records);
+    enqueueWrite(removeDocuments('attendance', replacedRecords.map((record) => record.id)));
+    enqueueWrite(saveDocuments('attendance', records));
     const updatedRecords = [...records, ...existingFiltered];
     setAttendanceRecords(updatedRecords);
   };
@@ -499,7 +566,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (matching.length === 0) return 0;
 
-    await Promise.all(matching.map((record) => removeDocument('attendance', record.id)));
+    enqueueWrite(removeDocuments('attendance', matching.map((record) => record.id)));
     const remaining = attendanceRecords.filter((record) => {
       const recordMonth = record.date.substring(0, 7);
       const matchesMonth = recordMonth >= fromMonth && recordMonth <= toMonth;
@@ -520,7 +587,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       callTime: new Date().toLocaleString(),
     };
 
-    await saveDocument('guardianCallLogs', newLog);
+    enqueueWrite(saveDocument('guardianCallLogs', newLog));
     setCallLogs((current) => [newLog, ...current]);
   };
 
@@ -536,7 +603,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: `dept_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       name: cleanName,
     };
-    await saveDocument('departments', departmentDocument);
+    enqueueWrite(saveDocument('departments', departmentDocument));
     setDepartmentDocuments((current) => [...current, departmentDocument]);
     setDepartments((current) => [...current, cleanName]);
     return cleanName;
@@ -555,12 +622,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updatedStudents = students.map((student) => student.department === currentName ? { ...student, department: cleanName } : student);
     const updatedAttendance = attendanceRecords.map((record) => record.department === currentName ? { ...record, department: cleanName } : record);
     const updatedSubjects = subjects.map((subject) => subject.department === currentName ? { ...subject, department: cleanName } : subject);
-    await Promise.all([
+    const writes = [
       saveDocument('departments', updatedDocument),
       saveDocuments('students', updatedStudents.filter((student, index) => students[index].department === currentName)),
       saveDocuments('attendance', updatedAttendance.filter((record, index) => attendanceRecords[index].department === currentName)),
       saveDocuments('subjects', updatedSubjects.filter((subject, index) => subjects[index].department === currentName)),
-    ]);
+    ];
+    writes.forEach(enqueueWrite);
     setDepartments((current) => current.map((department) => department === currentName ? cleanName : department));
     setDepartmentDocuments((current) => current.map((department) => department.id === departmentDocument.id ? updatedDocument : department));
     setStudents(updatedStudents);
@@ -573,7 +641,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     requireDatabaseAccess();
     const departmentDocument = departmentDocuments.find((department) => department.name === name);
     if (!departmentDocument) throw new Error('Department not found. Refresh the database and try again.');
-    await removeDocument('departments', departmentDocument.id);
+    enqueueWrite(removeDocument('departments', departmentDocument.id));
     setDepartmentDocuments((current) => current.filter((department) => department.id !== departmentDocument.id));
     setDepartments((current) => current.filter((department) => department !== name));
   };
@@ -592,7 +660,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       department,
       semester,
     };
-    await saveDocument('subjects', newSub);
+    enqueueWrite(saveDocument('subjects', newSub));
     setSubjects((current) => [...current, newSub]);
 
     return newSub;
@@ -610,14 +678,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         : s
     );
-    await saveDocument('subjects', updatedList.find((item) => item.id === updatedSubject.id)!);
+    enqueueWrite(saveDocument('subjects', updatedList.find((item) => item.id === updatedSubject.id)!));
     setSubjects(updatedList);
   };
 
   // Subject Management: Delete
   const deleteSubject = async (subjectId: string): Promise<void> => {
     requireDatabaseAccess();
-    await removeDocument('subjects', subjectId);
+    enqueueWrite(removeDocument('subjects', subjectId));
     const updatedList = subjects.filter((s) => s.id !== subjectId);
     setSubjects(updatedList);
   };
@@ -637,14 +705,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         combined.push(preset);
       }
     });
-    await saveDocuments('subjects', combined);
+    enqueueWrite(saveDocuments('subjects', combined));
     setSubjects(combined);
   };
 
   // Subject Management: Clear all subjects
   const clearAllSubjects = async (): Promise<void> => {
     requireDatabaseAccess();
-    await Promise.all(subjects.map((subject) => removeDocument('subjects', subject.id)));
+    enqueueWrite(removeDocuments('subjects', subjects.map((subject) => subject.id)));
     setSubjects([]);
   };
 

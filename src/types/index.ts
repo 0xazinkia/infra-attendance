@@ -78,5 +78,7 @@ export interface GuardianCallLog {
 export interface DatabaseStatus {
   isConnected: boolean;
   isLoading: boolean;
+  isOnline: boolean;
+  pendingWrites: number;
   error: string | null;
 }

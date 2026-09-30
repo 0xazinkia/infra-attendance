@@ -9,7 +9,7 @@ import { GuardianCallLogsView } from './components/GuardianCallLogsView';
 import { GoogleSheetsSettings } from './components/GoogleSheetsSettings';
 
 function AppContent() {
-  const { user, isAuthorizedAdmin } = useApp();
+  const { user, isAuthorizedAdmin, databaseStatus } = useApp();
   const [activeTab, setActiveTab] = useState<'attendance' | 'students' | 'reports' | 'callLogs' | 'sheets'>('attendance');
 
   // The root URL and /admin-access both open the admin access portal.
@@ -56,6 +56,19 @@ function AppContent() {
 
       {/* Main Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 sm:px-6">
+        {showAdminDashboard && (!databaseStatus.isOnline || databaseStatus.pendingWrites > 0 || databaseStatus.error) && (
+          <div
+            role="status"
+            className={`mb-4 rounded-lg border px-4 py-3 text-xs font-medium ${databaseStatus.error ? 'border-rose-200 bg-rose-50 text-rose-900' : databaseStatus.isOnline ? 'border-sky-200 bg-sky-50 text-sky-900' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
+          >
+            {databaseStatus.error
+              ? `A saved change could not sync: ${databaseStatus.error}`
+              : databaseStatus.isOnline
+              ? `Syncing ${databaseStatus.pendingWrites} saved change${databaseStatus.pendingWrites === 1 ? '' : 's'} to Firebase...`
+              : 'Offline mode: changes are saved on this device and will sync automatically when internet returns.'}
+          </div>
+        )}
+
         {/* Case 2: User is NOT signed in or not authorized */}
         {showAdminGate && (
           <AdminAccessGate onSuccess={handleAdminAuthSuccess} />

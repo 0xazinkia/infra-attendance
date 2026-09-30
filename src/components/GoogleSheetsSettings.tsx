@@ -176,10 +176,11 @@ export const GoogleSheetsSettings: React.FC = () => {
         </div>
 
         <div className="mt-4 flex items-center gap-2 text-xs">
-          <span className={`h-2.5 w-2.5 rounded-full ${databaseStatus.isConnected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+          <span className={`h-2.5 w-2.5 rounded-full ${databaseStatus.isConnected && databaseStatus.isOnline ? 'bg-emerald-500' : databaseStatus.isConnected ? 'bg-amber-500' : 'bg-slate-300'}`} />
           <span className="font-semibold text-slate-800">
-            {databaseStatus.isLoading ? 'Loading Firebase data...' : databaseStatus.isConnected ? 'Connected to Firebase' : user ? 'Firebase unavailable' : 'Sign in to connect'}
+            {databaseStatus.isLoading ? 'Loading Firebase data...' : databaseStatus.isConnected ? databaseStatus.isOnline ? 'Connected to Firebase' : 'Offline · using saved data' : user ? 'Firebase unavailable' : 'Sign in to connect'}
           </span>
+          {databaseStatus.pendingWrites > 0 && <span className="text-sky-700">{databaseStatus.pendingWrites} change(s) syncing</span>}
           {user?.email && <span className="text-slate-500">({user.email})</span>}
         </div>
         {databaseStatus.error && <p className="mt-2 text-xs text-rose-700">{databaseStatus.error}</p>}
