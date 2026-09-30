@@ -16,22 +16,25 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { SubjectItem, Department, Semester } from '../types';
-import { DEPARTMENTS, SEMESTERS } from '../data/mockData';
+import { SEMESTERS } from '../data/mockData';
 
 export const SubjectManagerSection: React.FC = () => {
   const {
     subjects,
+    departments,
     addSubject,
     updateSubject,
     deleteSubject,
     seedPresetSubjects,
     clearAllSubjects,
-    sheetStatus,
+    databaseStatus,
   } = useApp();
 
+  const defaultDepartment = departments[0] || '';
+
   // Filters
-  const [selectedDept, setSelectedDept] = useState<string>('Computer Technology');
-  const [selectedSem, setSelectedSem] = useState<string>('4th Semester');
+  const [selectedDept, setSelectedDept] = useState<string>('all');
+  const [selectedSem, setSelectedSem] = useState<string>(SEMESTERS[0]);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Modal State for Add / Edit
@@ -39,8 +42,8 @@ export const SubjectManagerSection: React.FC = () => {
   const [editingSubject, setEditingSubject] = useState<SubjectItem | null>(null);
 
   // Form State
-  const [formDept, setFormDept] = useState<Department>('Computer Technology');
-  const [formSem, setFormSem] = useState<Semester>('4th Semester');
+  const [formDept, setFormDept] = useState<Department>(defaultDepartment);
+  const [formSem, setFormSem] = useState<Semester>(SEMESTERS[0]);
   const [formCode, setFormCode] = useState('');
   const [formName, setFormName] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -52,6 +55,11 @@ export const SubjectManagerSection: React.FC = () => {
 
   // Feedback banner
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const hasDatabaseAccess = Boolean(databaseStatus.isConnected && databaseStatus.error === null);
+  const canManageSubjects = hasDatabaseAccess && departments.length > 0;
+  const subjectManagementMessage = hasDatabaseAccess && departments.length === 0
+    ? 'No departments have been added yet. Add a department in Firebase Data before managing subjects.'
+    : 'Sign in to Firebase before adding or changing subjects. Subjects are saved to Cloud Firestore.';
 
   const showFeedback = (type: 'success' | 'error', text: string) => {
     setFeedback({ type, text });
@@ -74,8 +82,8 @@ export const SubjectManagerSection: React.FC = () => {
   // Open modal for adding
   const handleOpenAdd = () => {
     setEditingSubject(null);
-    setFormDept(selectedDept !== 'all' ? (selectedDept as Department) : 'Computer Technology');
-    setFormSem(selectedSem !== 'all' ? (selectedSem as Semester) : '4th Semester');
+    setFormDept(selectedDept !== 'all' ? (selectedDept as Department) : defaultDepartment);
+    setFormSem(selectedSem !== 'all' ? (selectedSem as Semester) : SEMESTERS[0]);
     setFormCode('');
     setFormName('');
     setFormError(null);
@@ -147,6 +155,25 @@ export const SubjectManagerSection: React.FC = () => {
     }
   };
 
+  const handleSeedPresets = async () => {
+    try {
+      await seedPresetSubjects();
+      showFeedback('success', 'Preset subjects saved to Firebase.');
+    } catch (err: unknown) {
+      showFeedback('error', err instanceof Error ? err.message : 'Could not save preset subjects.');
+    }
+  };
+
+  const handleClearSubjects = async () => {
+    if (!confirm('Are you sure you want to clear all subjects? This cannot be undone.')) return;
+    try {
+      await clearAllSubjects();
+      showFeedback('success', 'All subjects cleared from Firebase.');
+    } catch (err: unknown) {
+      showFeedback('error', err instanceof Error ? err.message : 'Could not clear subjects.');
+    }
+  };
+
   return (
     <div className="mt-8 pt-8 border-t border-slate-200">
       {/* Header */}
@@ -161,20 +188,28 @@ export const SubjectManagerSection: React.FC = () => {
             </h3>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Dynamically add, update, and delete academic courses and subjects. Configured subjects are used for daily attendance and automatically synced with Google Sheets.
+            Dynamically add, update, and delete academic courses and subjects. Configured subjects are used for daily attendance and saved in Firebase.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             onClick={handleOpenAdd}
-            className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-xs transition"
+            disabled={!canManageSubjects}
+            title={canManageSubjects ? 'Add subject to Firebase' : hasDatabaseAccess && departments.length === 0 ? 'Add a department first' : 'Sign in and connect to Firebase first'}
+            className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold text-xs rounded-xl shadow-xs transition"
           >
             <Plus className="w-4 h-4" />
             <span>Add New Subject</span>
           </button>
         </div>
       </div>
+
+      {!canManageSubjects && (
+        <div className="mt-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+          {subjectManagementMessage}
+        </div>
+      )}
 
       {/* Feedback Toast */}
       {feedback && (
@@ -206,8 +241,8 @@ export const SubjectManagerSection: React.FC = () => {
             onChange={(e) => setSelectedDept(e.target.value)}
             className="w-full text-xs font-medium bg-white border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
           >
-            <option value="all">All Departments ({DEPARTMENTS.length})</option>
-            {DEPARTMENTS.map((dept) => (
+            <option value="all">All Departments ({departments.length})</option>
+            {departments.map((dept) => (
               <option key={dept} value={dept}>
                 {dept}
               </option>
@@ -279,7 +314,8 @@ export const SubjectManagerSection: React.FC = () => {
             <div className="flex items-center justify-center gap-2 pt-2">
               <button
                 onClick={handleOpenAdd}
-                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
+                disabled={!canManageSubjects}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add First Subject</span>
@@ -287,8 +323,9 @@ export const SubjectManagerSection: React.FC = () => {
 
               {subjects.length === 0 && (
                 <button
-                  onClick={seedPresetSubjects}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
+                  onClick={handleSeedPresets}
+                  disabled={!canManageSubjects}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-amber-500" />
                   <span>Seed Standard BTEB Subjects</span>
@@ -331,15 +368,17 @@ export const SubjectManagerSection: React.FC = () => {
                       <div className="flex items-center justify-center gap-1">
                         <button
                           onClick={() => handleOpenEdit(sub)}
+                          disabled={!canManageSubjects}
                           title="Edit Subject"
-                          className="p-1.5 rounded-lg text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 transition"
+                          className="p-1.5 rounded-lg text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
                         >
                           <Edit3 className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => setSubjectToDelete(sub)}
+                          disabled={!canManageSubjects}
                           title="Delete Subject"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -359,9 +398,9 @@ export const SubjectManagerSection: React.FC = () => {
             <span>
               Total {subjects.length} active subject{subjects.length === 1 ? '' : 's'} registered in system
             </span>
-            {sheetStatus.spreadsheetId && (
+            {databaseStatus.isConnected && (
               <span className="text-emerald-700 font-medium flex items-center gap-1">
-                • <FileSpreadsheet className="w-3 h-3 text-emerald-600 inline" /> Synced with Google Sheets
+                • <FileSpreadsheet className="w-3 h-3 text-emerald-600 inline" /> Saved in Firebase
               </span>
             )}
           </div>
@@ -369,8 +408,9 @@ export const SubjectManagerSection: React.FC = () => {
           <div className="flex items-center gap-2">
             {subjects.length < 5 && (
               <button
-                onClick={seedPresetSubjects}
-                className="text-emerald-700 hover:underline font-semibold flex items-center gap-1 text-[11px]"
+                onClick={handleSeedPresets}
+                disabled={!canManageSubjects}
+                className="text-emerald-700 hover:underline disabled:opacity-40 disabled:cursor-not-allowed font-semibold flex items-center gap-1 text-[11px]"
               >
                 <Sparkles className="w-3 h-3 text-amber-500" />
                 <span>Preset Standard BTEB Subjects</span>
@@ -378,12 +418,9 @@ export const SubjectManagerSection: React.FC = () => {
             )}
             {subjects.length > 0 && (
               <button
-                onClick={() => {
-                  if (confirm('Are you sure you want to clear all subjects? This cannot be undone.')) {
-                    clearAllSubjects();
-                  }
-                }}
-                className="text-slate-400 hover:text-rose-600 hover:underline transition text-[11px]"
+                onClick={handleClearSubjects}
+                disabled={!canManageSubjects}
+                className="text-slate-400 hover:text-rose-600 hover:underline disabled:opacity-40 disabled:cursor-not-allowed transition text-[11px]"
               >
                 Clear all
               </button>
@@ -438,11 +475,12 @@ export const SubjectManagerSection: React.FC = () => {
                   onChange={(e) => setFormDept(e.target.value as Department)}
                   className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                 >
-                  {DEPARTMENTS.map((dept) => (
+                  {departments.map((dept) => (
                     <option key={dept} value={dept}>
                       {dept}
                     </option>
                   ))}
+                  {formDept && !departments.includes(formDept) && <option value={formDept}>{formDept} (archived)</option>}
                 </select>
               </div>
 
@@ -488,7 +526,7 @@ export const SubjectManagerSection: React.FC = () => {
                   type="text"
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
-                  placeholder="e.g. Object Oriented Programming (Java/Python)"
+                  placeholder="e.g. Web Development & Design"
                   className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                   required
                 />

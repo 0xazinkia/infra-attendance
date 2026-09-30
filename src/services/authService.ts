@@ -7,11 +7,13 @@ import {
   User, 
   signOut 
 } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+export const db = getFirestore(app);
 
 // Scopes required for Google Sheets and Google Drive integration
 export const SCOPES = [

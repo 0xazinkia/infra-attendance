@@ -255,7 +255,7 @@ export const GuardianCallModal: React.FC<GuardianCallModalProps> = ({
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-slate-500" />
-                <span>Log Guardian Call Outcome (Syncs to Google Sheets)</span>
+                <span>Log Guardian Call Outcome (Saved to Firebase)</span>
               </label>
             </div>
 
@@ -334,7 +334,7 @@ export const GuardianCallModal: React.FC<GuardianCallModalProps> = ({
             ) : (
               <>
                 <Save className="w-4 h-4" />
-                <span>Save Call Log to Google Sheet</span>
+                <span>Save Call Log to Firebase</span>
               </>
             )}
           </button>

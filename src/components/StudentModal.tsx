@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { X, UserPlus, Save, GraduationCap, Phone, ShieldCheck, MapPin } from 'lucide-react';
 import { Student, Department, Semester, Section } from '../types';
-import { DEPARTMENTS, SEMESTERS, SECTIONS } from '../data/mockData';
+import { useApp } from '../context/AppContext';
+import { SEMESTERS, SECTIONS } from '../data/mockData';
 
 interface StudentModalProps {
   isOpen: boolean;
@@ -16,12 +17,13 @@ interface StudentModalProps {
 export const StudentModal: React.FC<StudentModalProps> = ({
   isOpen,
   studentToEdit,
-  defaultDepartment = 'Computer Technology',
-  defaultSemester = '4th Semester',
+  defaultDepartment = '',
+  defaultSemester = SEMESTERS[0],
   defaultSection = 'A',
   onClose,
   onSave,
 }) => {
+  const { departments } = useApp();
   const isEditing = Boolean(studentToEdit);
 
   const [name, setName] = useState('');
@@ -74,6 +76,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
     const err: Record<string, string> = {};
     if (!name.trim()) err.name = 'Student Name is required';
     if (!roll.trim()) err.roll = 'Board Roll number is required';
+    if (!department) err.department = 'Add a department before enrolling students';
     if (!guardianPhone.trim()) err.guardianPhone = 'Guardian Phone number is required for calling';
     setErrors(err);
     return Object.keys(err).length === 0;
@@ -154,12 +157,15 @@ export const StudentModal: React.FC<StudentModalProps> = ({
                   onChange={(e) => setDepartment(e.target.value as Department)}
                   className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2.5 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                 >
-                  {DEPARTMENTS.map((dept) => (
+                  {departments.map((dept) => (
                     <option key={dept} value={dept}>
                       {dept}
                     </option>
                   ))}
+                  {department && !departments.includes(department) && <option value={department}>{department} (archived)</option>}
+                  {departments.length === 0 && <option value="">No departments configured</option>}
                 </select>
+                {errors.department && <span className="text-[11px] text-rose-600 mt-0.5 block">{errors.department}</span>}
               </div>
 
               <div>
@@ -356,7 +362,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || (departments.length === 0 && !studentToEdit)}
               className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-md transition disabled:opacity-50 flex items-center gap-1.5"
             >
               <Save className="w-3.5 h-3.5" />

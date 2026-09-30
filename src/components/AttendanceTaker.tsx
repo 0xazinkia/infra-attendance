@@ -4,16 +4,12 @@ import {
   XCircle, 
   Save, 
   Users, 
-  PhoneCall, 
   FileSpreadsheet, 
   Calendar, 
   BookOpen, 
   Filter, 
-  Sparkles, 
   Phone, 
   MessageSquare, 
-  AlertTriangle, 
-  RotateCcw, 
   CheckCheck 
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -25,24 +21,24 @@ import {
   AttendanceRecord,
   Student 
 } from '../types';
-import { DEPARTMENTS, SEMESTERS, SECTIONS } from '../data/mockData';
+import { SEMESTERS, SECTIONS } from '../data/mockData';
 import { GuardianCallModal } from './GuardianCallModal';
 
 export const AttendanceTaker: React.FC = () => {
   const { 
     students, 
+    departments,
     filter, 
     setFilter, 
     subjects, 
     saveAttendanceBatch, 
-    sheetStatus, 
-    syncWithSheets, 
+    databaseStatus,
     user, 
     loginWithGoogle 
   } = useApp();
 
   // Local state for current attendance sheet taking
-  const [attendanceState, setAttendanceState] = useState<Record<string, { status: AttendanceStatus; remarks?: string }>>({});
+  const [attendanceState, setAttendanceState] = useState<Record<string, { status?: AttendanceStatus; remarks?: string }>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [activeCallStudent, setActiveCallStudent] = useState<Student | null>(null);
@@ -73,15 +69,17 @@ export const AttendanceTaker: React.FC = () => {
       if (!match) {
         setFilter((prev) => ({ ...prev, subject: availableSubjects[0].name }));
       }
+    } else if (filter.subject) {
+      setFilter((prev) => ({ ...prev, subject: '' }));
     }
   }, [availableSubjects, filter.subject, setFilter]);
 
-  // Initialize attendance statuses to 'present' by default whenever enrolled students change
+  // Attendance is present only when explicitly selected; an unselected row is absent.
   useEffect(() => {
     setAttendanceState((prev) => {
-      const next: Record<string, { status: AttendanceStatus; remarks?: string }> = {};
+      const next: Record<string, { status?: AttendanceStatus; remarks?: string }> = {};
       enrolledStudents.forEach((student) => {
-        next[student.id] = prev[student.id] || { status: 'present', remarks: '' };
+        next[student.id] = prev[student.id] || { remarks: '' };
       });
       return next;
     });
@@ -94,9 +92,9 @@ export const AttendanceTaker: React.FC = () => {
     let absent = 0;
 
     enrolledStudents.forEach((student) => {
-      const entry = attendanceState[student.id]?.status || 'present';
+      const entry = attendanceState[student.id]?.status;
       if (entry === 'present') present++;
-      else if (entry === 'absent') absent++;
+      else absent++;
     });
 
     const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
@@ -104,17 +102,12 @@ export const AttendanceTaker: React.FC = () => {
     return { total, present, absent, percentage };
   }, [enrolledStudents, attendanceState]);
 
-  // Absentees who require guardian attention
-  const absentStudents = useMemo(() => {
-    return enrolledStudents.filter((s) => attendanceState[s.id]?.status === 'absent');
-  }, [enrolledStudents, attendanceState]);
-
   const handleStatusChange = (studentId: string, status: AttendanceStatus) => {
     setAttendanceState((prev) => ({
       ...prev,
       [studentId]: {
         ...prev[studentId],
-        status,
+        status: prev[studentId]?.status === status ? undefined : status,
       },
     }));
   };
@@ -123,7 +116,7 @@ export const AttendanceTaker: React.FC = () => {
     setAttendanceState((prev) => ({
       ...prev,
       [studentId]: {
-        status: prev[studentId]?.status || 'present',
+        status: prev[studentId]?.status,
         remarks,
       },
     }));
@@ -140,16 +133,19 @@ export const AttendanceTaker: React.FC = () => {
     setAttendanceState(next);
   };
 
-  // Submit attendance to Google Sheets
+  // Submit attendance to Firebase
   const handleSaveAttendance = async () => {
     if (enrolledStudents.length === 0) return;
-
+    if (!filter.subject) {
+      window.alert('Add a subject in Subject Management before taking attendance.');
+      return;
+    }
     setIsSaving(true);
     setSaveSuccessMsg(null);
     try {
       const timestamp = new Date().toISOString();
       const recordsToSave: AttendanceRecord[] = enrolledStudents.map((student) => {
-        const entry = attendanceState[student.id] || { status: 'present' };
+        const entry = attendanceState[student.id] || {};
         return {
           id: `att_${student.id}_${filter.date}_${Date.now()}`,
           date: filter.date,
@@ -161,7 +157,7 @@ export const AttendanceTaker: React.FC = () => {
           studentId: student.id,
           roll: student.roll,
           studentName: student.name,
-          status: entry.status,
+          status: entry.status === 'present' ? 'present' : 'absent',
           guardianPhone: student.guardianPhone,
           remarks: entry.remarks,
           recordedBy: user?.displayName || 'Faculty Member',
@@ -171,11 +167,7 @@ export const AttendanceTaker: React.FC = () => {
 
       await saveAttendanceBatch(recordsToSave);
 
-      const targetDestination = sheetStatus.spreadsheetId
-        ? `and synced with Google Sheets (${sheetStatus.spreadsheetName})`
-        : '(Stored in local memory; connect Google Sheets to sync)';
-
-      setSaveSuccessMsg(`Attendance for ${recordsToSave.length} students recorded successfully ${targetDestination}!`);
+      setSaveSuccessMsg(`Attendance for ${recordsToSave.length} students saved to Firebase.`);
       setTimeout(() => setSaveSuccessMsg(null), 5000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error saving attendance';
@@ -230,11 +222,12 @@ export const AttendanceTaker: React.FC = () => {
               onChange={(e) => setFilter((prev) => ({ ...prev, department: e.target.value as Department }))}
               className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
-              {DEPARTMENTS.map((dept) => (
+              {departments.map((dept) => (
                 <option key={dept} value={dept}>
                   {dept}
                 </option>
               ))}
+              {departments.length === 0 && <option value="">No departments configured</option>}
             </select>
           </div>
 
@@ -288,13 +281,14 @@ export const AttendanceTaker: React.FC = () => {
                 ))}
               </select>
             ) : (
-              <input
-                type="text"
-                value={filter.subject}
-                onChange={(e) => setFilter((prev) => ({ ...prev, subject: e.target.value }))}
-                placeholder="Enter Subject Name"
-                className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-              />
+              <select
+                value=""
+                disabled
+                aria-label="No subject configured"
+                className="w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 p-2.5 text-xs font-medium text-slate-500 disabled:opacity-100"
+              >
+                <option value="">No subjects configured</option>
+              </select>
             )}
           </div>
         </div>
@@ -362,95 +356,6 @@ export const AttendanceTaker: React.FC = () => {
             <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
             <p className="text-xs sm:text-sm font-medium">{saveSuccessMsg}</p>
           </div>
-          {sheetStatus.spreadsheetUrl && (
-            <a
-              href={sheetStatus.spreadsheetUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs font-bold text-emerald-700 underline hover:text-emerald-900 ml-4 flex-shrink-0"
-            >
-              Open in Sheets
-            </a>
-          )}
-        </div>
-      )}
-
-      {/* GUARDIAN ABSENTEE CALLING TRAY (CRITICAL REQUIREMENT) */}
-      {absentStudents.length > 0 && (
-        <div className="bg-rose-50/90 border-2 border-rose-300/80 rounded-2xl p-5 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-rose-200">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center shadow-md shadow-rose-600/30">
-                <PhoneCall className="w-5 h-5 animate-pulse" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-rose-950 flex items-center gap-2">
-                  <span>Guardian Contact Required for Absentees</span>
-                  <span className="bg-rose-600 text-white text-[11px] font-mono px-2 py-0.2 rounded-full">
-                    {absentStudents.length} Absent
-                  </span>
-                </h3>
-                <p className="text-xs text-rose-700">
-                  Infra Polytechnic policy recommends immediate guardian follow-up on class absence
-                </p>
-              </div>
-            </div>
-
-            <span className="text-xs font-semibold text-rose-800 bg-white/80 px-3 py-1 rounded-lg border border-rose-200">
-              One-Click Calling & Notice Dispatch
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mt-4">
-            {absentStudents.map((absentee) => (
-              <div
-                key={absentee.id}
-                className="bg-white rounded-xl p-3.5 border border-rose-200 shadow-xs flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
-                      Roll: {absentee.roll}
-                    </span>
-                    <span className="text-[11px] font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
-                      Absent Today
-                    </span>
-                  </div>
-                  <h4 className="text-sm font-bold text-slate-900 mt-1.5">{absentee.name}</h4>
-                  <div className="text-xs text-slate-600 mt-1">
-                    <p>
-                      Guardian:{' '}
-                      <strong className="text-slate-800">
-                        {absentee.guardianName} ({absentee.guardianRelation})
-                      </strong>
-                    </p>
-                    <p className="font-mono font-medium text-slate-700 mt-0.5">
-                      📞 {absentee.guardianPhone || 'No guardian number'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Call & Notice buttons */}
-                <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center gap-2">
-                  <a
-                    href={`tel:${absentee.guardianPhone}`}
-                    className="flex-1 flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold py-1.5 px-2.5 rounded-lg text-xs transition shadow-xs"
-                  >
-                    <Phone className="w-3.5 h-3.5" />
-                    <span>Call Guardian</span>
-                  </a>
-                  <button
-                    onClick={() => setActiveCallStudent(absentee)}
-                    className="flex items-center justify-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-1.5 px-2.5 rounded-lg text-xs transition"
-                    title="SMS Notice & Log Call Outcome"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Notice / Log</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       )}
 
@@ -476,22 +381,14 @@ export const AttendanceTaker: React.FC = () => {
               <CheckCheck className="w-3.5 h-3.5" />
               <span>All Present</span>
             </button>
-            <button
-              onClick={() => handleMarkAll('absent')}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-100 hover:bg-rose-200 text-rose-800 transition"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>All Absent</span>
-            </button>
-
-            {/* Save to Google Sheets Button */}
+            {/* Save to Firebase Button */}
             <button
               onClick={handleSaveAttendance}
-              disabled={isSaving || enrolledStudents.length === 0}
+              disabled={isSaving || enrolledStudents.length === 0 || !filter.subject}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 shadow-md transition disabled:opacity-50 ml-auto"
             >
               <Save className="w-4 h-4 text-emerald-400" />
-              <span>{isSaving ? 'Saving to Sheets...' : 'Save Attendance to Google Sheets'}</span>
+              <span>{isSaving ? 'Saving to Firebase...' : 'Save Attendance'}</span>
             </button>
           </div>
         </div>
@@ -506,20 +403,6 @@ export const AttendanceTaker: React.FC = () => {
             <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
               There are no students listed for {filter.department} in {filter.semester}, Section {filter.section}. Switch department or add new students in the Students tab.
             </p>
-            <button
-              onClick={() => {
-                setFilter((prev) => ({
-                  ...prev,
-                  department: 'Computer Technology',
-                  semester: '4th Semester',
-                  section: 'A',
-                }));
-              }}
-              className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3.5 py-2 rounded-lg transition border border-emerald-200"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Switch to Demo Class (Computer 4th Sem)</span>
-            </button>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -536,8 +419,8 @@ export const AttendanceTaker: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {enrolledStudents.map((student, idx) => {
-                  const currentEntry = attendanceState[student.id] || { status: 'present' };
-                  const isCurrentAbsent = currentEntry.status === 'absent';
+                  const currentEntry = attendanceState[student.id] || {};
+                  const isCurrentAbsent = currentEntry.status !== 'present';
 
                   return (
                     <tr
@@ -638,19 +521,6 @@ export const AttendanceTaker: React.FC = () => {
                             <span>Present</span>
                           </button>
 
-                          {/* Absent */}
-                          <button
-                            type="button"
-                            onClick={() => handleStatusChange(student.id, 'absent')}
-                            className={`px-3.5 py-1.5 rounded-lg font-bold text-xs transition flex items-center gap-1.5 ${
-                              currentEntry.status === 'absent'
-                                ? 'bg-rose-600 text-white shadow-xs ring-1 ring-rose-500'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
-                          >
-                            <XCircle className="w-3.5 h-3.5" />
-                            <span>Absent</span>
-                          </button>
                         </div>
                       </td>
 
@@ -683,11 +553,11 @@ export const AttendanceTaker: React.FC = () => {
             <div className="flex items-center gap-3">
               <button
                 onClick={handleSaveAttendance}
-                disabled={isSaving}
+                disabled={isSaving || !filter.subject}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 shadow-md transition disabled:opacity-50"
               >
                 <Save className="w-4 h-4 text-emerald-400" />
-                <span>{isSaving ? 'Submitting to Sheets...' : 'Save Attendance to Google Sheets'}</span>
+                <span>{isSaving ? 'Saving to Firebase...' : 'Save Attendance'}</span>
               </button>
             </div>
           </div>

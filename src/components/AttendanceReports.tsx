@@ -1,9 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   BarChart3, 
   Calendar, 
   FileSpreadsheet, 
-  AlertTriangle, 
   CheckCircle2, 
   XCircle,
   PhoneCall, 
@@ -15,33 +14,58 @@ import {
   Filter,
   Check,
   ChevronRight,
-  Layers
+  Layers,
+  Pencil,
+  Save,
+  X
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { DEPARTMENTS, SEMESTERS, SECTIONS } from '../data/mockData';
+import { SEMESTERS, SECTIONS } from '../data/mockData';
 import { Department, Semester, Section, Student, AttendanceRecord } from '../types';
 import { GuardianCallModal } from './GuardianCallModal';
 
 export const AttendanceReports: React.FC = () => {
-  const { students, attendanceRecords, subjects, sheetStatus } = useApp();
+  const { students, attendanceRecords, subjects, departments, saveAttendanceBatch } = useApp();
 
   // Primary Filters
-  const [selectedDept, setSelectedDept] = useState<string>('all');
-  const [selectedSemester, setSelectedSemester] = useState<string>('all');
-  const [selectedSection, setSelectedSection] = useState<string>('all');
-  const [selectedSubject, setSelectedSubject] = useState<string>('all');
+  const [selectedDept, setSelectedDept] = useState<string>('');
+  const [selectedSemester, setSelectedSemester] = useState<string>(SEMESTERS[0]);
+  const [selectedSection, setSelectedSection] = useState<string>(SECTIONS[0]);
+  const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     // Default to current month YYYY-MM
     return new Date().toISOString().substring(0, 7);
   });
   const [searchQuery, setSearchQuery] = useState('');
+  const [reportTab, setReportTab] = useState<'daily' | 'monthly' | 'overall'>('daily');
+  const [overallStartMonth, setOverallStartMonth] = useState(() => new Date().toISOString().substring(0, 7));
+  const [expandedStatusDates, setExpandedStatusDates] = useState<{ studentId: string; status: 'present' | 'absent' } | null>(null);
 
   // Selected Date state for date-wise attendance inspection
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [dateFilterStatus, setDateFilterStatus] = useState<'all' | 'present' | 'absent'>('all');
+  const [editingStatusRecordId, setEditingStatusRecordId] = useState<string | null>(null);
+  const [pendingStatus, setPendingStatus] = useState<AttendanceRecord['status']>('present');
+  const [isSavingStatus, setIsSavingStatus] = useState(false);
 
   // Guardian call modal
   const [callStudent, setCallStudent] = useState<Student | null>(null);
+
+  useEffect(() => {
+    if (!departments.includes(selectedDept)) setSelectedDept(departments[0] || '');
+  }, [departments, selectedDept]);
+
+  const handleSaveStatus = async (record: AttendanceRecord) => {
+    setIsSavingStatus(true);
+    try {
+      await saveAttendanceBatch([{ ...record, status: pendingStatus, recordedAt: new Date().toISOString() }]);
+      setEditingStatusRecordId(null);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Could not update attendance status.');
+    } finally {
+      setIsSavingStatus(false);
+    }
+  };
 
   // Available months extracted from attendance records + current month
   const availableMonths = useMemo(() => {
@@ -61,7 +85,6 @@ export const AttendanceReports: React.FC = () => {
 
   // Format YYYY-MM into readable month name (e.g., "September 2026")
   const formatMonthName = (monthStr: string) => {
-    if (monthStr === 'all') return 'All Months';
     const [year, month] = monthStr.split('-');
     if (!year || !month) return monthStr;
     const date = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1);
@@ -74,8 +97,8 @@ export const AttendanceReports: React.FC = () => {
 
     // 1. From configured subjects in system
     subjects.forEach((s) => {
-      const matchDept = selectedDept === 'all' || s.department === selectedDept;
-      const matchSem = selectedSemester === 'all' || s.semester === selectedSemester;
+      const matchDept = s.department === selectedDept;
+      const matchSem = s.semester === selectedSemester;
       if (matchDept && matchSem) {
         map.set(s.name, `[${s.code}] ${s.name}`);
       }
@@ -83,8 +106,8 @@ export const AttendanceReports: React.FC = () => {
 
     // 2. From historical attendance records
     attendanceRecords.forEach((r) => {
-      const matchDept = selectedDept === 'all' || r.department === selectedDept;
-      const matchSem = selectedSemester === 'all' || r.semester === selectedSemester;
+      const matchDept = r.department === selectedDept;
+      const matchSem = r.semester === selectedSemester;
       if (matchDept && matchSem && r.subject && !map.has(r.subject)) {
         map.set(r.subject, r.subject);
       }
@@ -92,6 +115,12 @@ export const AttendanceReports: React.FC = () => {
 
     return Array.from(map.entries()).map(([name, label]) => ({ name, label }));
   }, [subjects, attendanceRecords, selectedDept, selectedSemester]);
+
+  useEffect(() => {
+    if (availableSubjects.length > 0 && !availableSubjects.some((subject) => subject.name === selectedSubject)) {
+      setSelectedSubject(availableSubjects[0].name);
+    }
+  }, [availableSubjects, selectedSubject]);
 
   // Class sessions held in the selected month matching dept, sem, sec, sub
   const classDatesInMonth = useMemo(() => {
@@ -111,11 +140,11 @@ export const AttendanceReports: React.FC = () => {
 
     attendanceRecords.forEach((r) => {
       if (!r.date) return;
-      const matchMonth = selectedMonth === 'all' || r.date.startsWith(selectedMonth);
-      const matchDept = selectedDept === 'all' || r.department === selectedDept;
-      const matchSem = selectedSemester === 'all' || r.semester === selectedSemester;
-      const matchSec = selectedSection === 'all' || r.section === selectedSection;
-      const matchSub = selectedSubject === 'all' || r.subject === selectedSubject;
+      const matchMonth = r.date.startsWith(selectedMonth);
+      const matchDept = r.department === selectedDept;
+      const matchSem = r.semester === selectedSemester;
+      const matchSec = r.section === selectedSection;
+      const matchSub = r.subject === selectedSubject;
 
       if (matchMonth && matchDept && matchSem && matchSec && matchSub) {
         if (!map.has(r.date)) {
@@ -161,10 +190,10 @@ export const AttendanceReports: React.FC = () => {
     return attendanceRecords
       .filter((r) => {
         const matchDate = r.date === activeSelectedDate;
-        const matchDept = selectedDept === 'all' || r.department === selectedDept;
-        const matchSem = selectedSemester === 'all' || r.semester === selectedSemester;
-        const matchSec = selectedSection === 'all' || r.section === selectedSection;
-        const matchSub = selectedSubject === 'all' || r.subject === selectedSubject;
+        const matchDept = r.department === selectedDept;
+        const matchSem = r.semester === selectedSemester;
+        const matchSec = r.section === selectedSection;
+        const matchSub = r.subject === selectedSubject;
         const matchStatus = dateFilterStatus === 'all' || r.status === dateFilterStatus;
         const matchSearch =
           searchQuery.trim() === '' ||
@@ -181,10 +210,10 @@ export const AttendanceReports: React.FC = () => {
     if (!activeSelectedDate) return null;
     const allRecordsForDate = attendanceRecords.filter((r) => {
       const matchDate = r.date === activeSelectedDate;
-      const matchDept = selectedDept === 'all' || r.department === selectedDept;
-      const matchSem = selectedSemester === 'all' || r.semester === selectedSemester;
-      const matchSec = selectedSection === 'all' || r.section === selectedSection;
-      const matchSub = selectedSubject === 'all' || r.subject === selectedSubject;
+      const matchDept = r.department === selectedDept;
+      const matchSem = r.semester === selectedSemester;
+      const matchSec = r.section === selectedSection;
+      const matchSub = r.subject === selectedSubject;
       return matchDate && matchDept && matchSem && matchSec && matchSub;
     });
 
@@ -199,9 +228,9 @@ export const AttendanceReports: React.FC = () => {
   // Relevant Students for Cumulative Report
   const relevantStudents = useMemo(() => {
     return students.filter((s) => {
-      const matchDept = selectedDept === 'all' || s.department === selectedDept;
-      const matchSem = selectedSemester === 'all' || s.semester === selectedSemester;
-      const matchSec = selectedSection === 'all' || s.section === selectedSection;
+      const matchDept = s.department === selectedDept;
+      const matchSem = s.semester === selectedSemester;
+      const matchSec = s.section === selectedSection;
       const matchSearch =
         s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         s.roll.toLowerCase().includes(searchQuery.toLowerCase());
@@ -214,8 +243,8 @@ export const AttendanceReports: React.FC = () => {
     return relevantStudents.map((student) => {
       const studentRecords = attendanceRecords.filter((r) => {
         const matchStudent = r.studentId === student.id || r.roll === student.roll;
-        const matchMonth = selectedMonth === 'all' || r.date.startsWith(selectedMonth);
-        const matchSub = selectedSubject === 'all' || r.subject === selectedSubject;
+        const matchMonth = r.date.startsWith(selectedMonth);
+        const matchSub = r.subject === selectedSubject;
         return matchStudent && matchMonth && matchSub;
       });
 
@@ -241,10 +270,80 @@ export const AttendanceReports: React.FC = () => {
     });
   }, [relevantStudents, attendanceRecords, selectedMonth, selectedSubject]);
 
-  // Short-attendance students (< 75%)
-  const shortAttendanceStudents = useMemo(() => {
-    return studentMetrics.filter((m) => m.totalClasses > 0 && m.percentage < 75);
-  }, [studentMetrics]);
+  const monthlyStudentRows = useMemo(() => relevantStudents.map((student) => {
+    const records = attendanceRecords.filter((record) => {
+      const sameStudent = record.studentId === student.id || record.roll === student.roll;
+      const matchesMonth = record.date.startsWith(selectedMonth);
+      const matchesDept = record.department === selectedDept;
+      const matchesSemester = record.semester === selectedSemester;
+      const matchesSection = record.section === selectedSection;
+      const matchesSubject = record.subject === selectedSubject;
+      return sameStudent && matchesMonth && matchesDept && matchesSemester && matchesSection && matchesSubject;
+    });
+    const present = records.filter((record) => record.status === 'present').length;
+    const absent = records.filter((record) => record.status === 'absent').length;
+    const presentDates = Array.from(new Set(records.filter((record) => record.status === 'present').map((record) => record.date))).sort();
+    const absentDates = Array.from(new Set(records.filter((record) => record.status === 'absent').map((record) => record.date))).sort();
+    const total = present + absent;
+    return { student, present, absent, presentDates, absentDates, total, percentage: total ? Math.round((present / total) * 100) : null };
+  }), [relevantStudents, attendanceRecords, selectedMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
+
+  const monthlyClassCount = useMemo(() => {
+    const sessions = new Set<string>();
+    attendanceRecords.forEach((record) => {
+      const matchesMonth = record.date.startsWith(selectedMonth);
+      const matchesDept = record.department === selectedDept;
+      const matchesSemester = record.semester === selectedSemester;
+      const matchesSection = record.section === selectedSection;
+      const matchesSubject = record.subject === selectedSubject;
+      if (matchesMonth && matchesDept && matchesSemester && matchesSection && matchesSubject) {
+        sessions.add(`${record.date}|${record.subject}|${record.timeSlot || ''}`);
+      }
+    });
+    return sessions.size;
+  }, [attendanceRecords, selectedMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
+
+  const overallAttendanceRows = useMemo(() => {
+    const currentMonth = new Date().toISOString().substring(0, 7);
+    return relevantStudents.map((student) => {
+      const records = attendanceRecords.filter((record) =>
+        (record.studentId === student.id || record.roll === student.roll) &&
+        record.date.substring(0, 7) >= overallStartMonth &&
+        record.date.substring(0, 7) <= currentMonth &&
+        record.department === selectedDept &&
+        record.semester === selectedSemester &&
+        record.section === selectedSection &&
+        record.subject === selectedSubject
+      );
+      const monthStats = new Map<string, { present: number; total: number }>();
+      records.forEach((record) => {
+        const month = record.date.substring(0, 7);
+        const stats = monthStats.get(month) || { present: 0, total: 0 };
+        stats.total += 1;
+        if (record.status === 'present') stats.present += 1;
+        monthStats.set(month, stats);
+      });
+      const monthlyRates = Array.from(monthStats.values()).map((stats) => (stats.present / stats.total) * 100);
+      const present = records.filter((record) => record.status === 'present').length;
+      const absent = records.filter((record) => record.status === 'absent').length;
+      return {
+        student,
+        total: present + absent,
+        present,
+        absent,
+        averagePercentage: monthlyRates.length
+          ? Math.round(monthlyRates.reduce((sum, rate) => sum + rate, 0) / monthlyRates.length)
+          : null,
+        monthsCounted: monthlyRates.length,
+      };
+    });
+  }, [relevantStudents, attendanceRecords, overallStartMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
+
+  const overallAveragePercentage = useMemo(() => {
+    const rowsWithAttendance = overallAttendanceRows.filter((row) => row.averagePercentage !== null);
+    if (!rowsWithAttendance.length) return null;
+    return Math.round(rowsWithAttendance.reduce((sum, row) => sum + (row.averagePercentage || 0), 0) / rowsWithAttendance.length);
+  }, [overallAttendanceRows]);
 
   // Format single date to nice readable format (e.g., "28 Sep, 2026 (Monday)")
   const formatDateLabel = (isoDate: string) => {
@@ -276,17 +375,6 @@ export const AttendanceReports: React.FC = () => {
             </p>
           </div>
 
-          {sheetStatus.spreadsheetUrl && (
-            <a
-              href={sheetStatus.spreadsheetUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold text-xs rounded-xl border border-emerald-200 transition"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-              <span>Open Attendance in Google Sheets</span>
-            </a>
-          )}
         </div>
 
         {/* Filters Bar: Department -> Semester -> Section -> Subject -> Month -> Search Student */}
@@ -300,16 +388,16 @@ export const AttendanceReports: React.FC = () => {
               value={selectedDept}
               onChange={(e) => {
                 setSelectedDept(e.target.value);
-                setSelectedSubject('all');
+                setSelectedSubject('');
               }}
               className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
-              <option value="all">All Departments</option>
-              {DEPARTMENTS.map((d) => (
+              {departments.map((d) => (
                 <option key={d} value={d}>
                   {d}
                 </option>
               ))}
+              {departments.length === 0 && <option value="">No departments configured</option>}
             </select>
           </div>
 
@@ -322,11 +410,10 @@ export const AttendanceReports: React.FC = () => {
               value={selectedSemester}
               onChange={(e) => {
                 setSelectedSemester(e.target.value);
-                setSelectedSubject('all');
+                setSelectedSubject('');
               }}
               className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
-              <option value="all">All Semesters</option>
               {SEMESTERS.map((s) => (
                 <option key={s} value={s}>
                   {s}
@@ -345,7 +432,6 @@ export const AttendanceReports: React.FC = () => {
               onChange={(e) => setSelectedSection(e.target.value)}
               className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
-              <option value="all">All Sections</option>
               {SECTIONS.map((sec) => (
                 <option key={sec} value={sec}>
                   Section {sec}
@@ -364,7 +450,6 @@ export const AttendanceReports: React.FC = () => {
               onChange={(e) => setSelectedSubject(e.target.value)}
               className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none truncate"
             >
-              <option value="all">All Subjects</option>
               {availableSubjects.map((sub) => (
                 <option key={sub.name} value={sub.name} title={sub.label}>
                   {sub.label}
@@ -383,7 +468,6 @@ export const AttendanceReports: React.FC = () => {
               onChange={(e) => setSelectedMonth(e.target.value)}
               className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
-              <option value="all">All Months</option>
               {availableMonths.map((m) => (
                 <option key={m} value={m}>
                   {formatMonthName(m)}
@@ -411,59 +495,37 @@ export const AttendanceReports: React.FC = () => {
         </div>
       </div>
 
-      {/* Summary KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* Total Class Sessions in Selected Month */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase">
-              Classes in {formatMonthName(selectedMonth)}
-            </span>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{classDatesInMonth.length}</p>
-            <span className="text-[11px] text-slate-500 mt-0.5 block">
-              {attendanceRecords.filter(r => selectedMonth === 'all' || r.date.startsWith(selectedMonth)).length} student records logged
-            </span>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center font-bold">
-            <Calendar className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Enrolled Students Tracked */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase">
-              Enrolled Students Tracked
-            </span>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{relevantStudents.length}</p>
-            <span className="text-[11px] text-slate-500 mt-0.5 block">
-              Infra Polytechnic Institute
-            </span>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold">
-            <GraduationCap className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Short Attendance (< 75%) Warning */}
-        <div className="bg-rose-50/80 p-4 rounded-xl border border-rose-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-rose-700 uppercase">
-              Short Attendance (&lt; 75%)
-            </span>
-            <p className="text-2xl font-bold text-rose-800 mt-1">
-              {shortAttendanceStudents.length} Students
-            </p>
-            <span className="text-[11px] text-rose-600 mt-0.5 block font-medium">
-              Guardian alert / notice required
-            </span>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center font-bold">
-            <AlertTriangle className="w-6 h-6" />
-          </div>
-        </div>
+      <div className="flex items-center gap-1 border-b border-slate-200" role="tablist" aria-label="Attendance report view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={reportTab === 'daily'}
+          onClick={() => setReportTab('daily')}
+          className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-semibold transition ${reportTab === 'daily' ? 'border-emerald-600 text-emerald-800' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+        >
+          <Calendar className="h-4 w-4" /> Daily Attendance
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={reportTab === 'monthly'}
+          onClick={() => setReportTab('monthly')}
+          className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-semibold transition ${reportTab === 'monthly' ? 'border-emerald-600 text-emerald-800' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+        >
+          <Layers className="h-4 w-4" /> Monthly Detailed Attendance
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={reportTab === 'overall'}
+          onClick={() => setReportTab('overall')}
+          className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-semibold transition ${reportTab === 'overall' ? 'border-emerald-600 text-emerald-800' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+        >
+          <BarChart3 className="h-4 w-4" /> Overall Attendance
+        </button>
       </div>
 
+      {reportTab === 'daily' && <div className="space-y-6">
       {/* MONTH CLASS DATES SELECTOR (as requested) */}
       <div className="bg-white rounded-2xl p-5 shadow-xs border border-slate-200 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b border-slate-100">
@@ -528,24 +590,6 @@ export const AttendanceReports: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2 mt-1.5 text-[11px]">
-                    <span className={isSelected ? 'text-emerald-200' : 'text-emerald-700 font-semibold'}>
-                      ✓ {session.present} Present
-                    </span>
-                    <span className={isSelected ? 'text-rose-200' : 'text-rose-700 font-semibold'}>
-                      ✗ {session.absent} Absent
-                    </span>
-                  </div>
-
-                  {session.subjects.size > 0 && (
-                    <div
-                      className={`text-[10px] mt-1.5 truncate max-w-[220px] font-medium ${
-                        isSelected ? 'text-emerald-100' : 'text-slate-500'
-                      }`}
-                    >
-                      {Array.from(session.subjects).join(', ')}
-                    </div>
-                  )}
                 </button>
               );
             })}
@@ -566,10 +610,7 @@ export const AttendanceReports: React.FC = () => {
                 </h3>
               </div>
               <p className="text-xs text-slate-300 mt-1">
-                {selectedDept !== 'all' ? selectedDept : 'All Departments'} •{' '}
-                {selectedSemester !== 'all' ? selectedSemester : 'All Semesters'} •{' '}
-                {selectedSection !== 'all' ? `Section ${selectedSection}` : 'All Sections'} •{' '}
-                {selectedSubject !== 'all' ? selectedSubject : 'All Subjects'}
+                {selectedDept} • {selectedSemester} • Section {selectedSection} • {selectedSubject || 'No subject selected'}
               </p>
             </div>
 
@@ -626,10 +667,10 @@ export const AttendanceReports: React.FC = () => {
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-100 text-slate-700 uppercase font-semibold text-[11px] border-b border-slate-200">
                   <tr>
+                    <th className="py-3 px-3 w-14 text-center">S/N</th>
                     <th className="py-3 px-4 w-28">Roll No</th>
                     <th className="py-3 px-4 min-w-[180px]">Student Name</th>
                     <th className="py-3 px-4 min-w-[150px]">Subject</th>
-                    <th className="py-3 px-4 min-w-[140px]">Department / Sem</th>
                     <th className="py-3 px-4 w-24 text-center">Section</th>
                     <th className="py-3 px-4 w-28 text-center">Status</th>
                     <th className="py-3 px-4 min-w-[160px]">Guardian Contact</th>
@@ -637,7 +678,7 @@ export const AttendanceReports: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {selectedDateAttendance.map((record) => {
+                  {selectedDateAttendance.map((record, index) => {
                     const matchedStudent = students.find((s) => s.id === record.studentId || s.roll === record.roll);
                     const isPresent = record.status === 'present';
 
@@ -648,6 +689,7 @@ export const AttendanceReports: React.FC = () => {
                           !isPresent ? 'bg-rose-50/30' : ''
                         }`}
                       >
+                        <td className="py-3 px-3 text-center font-mono text-slate-500">{index + 1}</td>
                         <td className="py-3 px-4 font-mono font-bold text-slate-900">
                           {record.roll}
                         </td>
@@ -657,35 +699,43 @@ export const AttendanceReports: React.FC = () => {
                         <td className="py-3 px-4 text-slate-700 font-medium">
                           {record.subject || 'N/A'}
                         </td>
-                        <td className="py-3 px-4 text-slate-600">
-                          <div>{record.department}</div>
-                          <div className="text-[10px] text-slate-400">{record.semester}</div>
-                        </td>
                         <td className="py-3 px-4 text-center">
                           <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
                             Sec {record.section}
                           </span>
                         </td>
                         <td className="py-3 px-4 text-center">
-                          <span
-                            className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
-                              isPresent
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                : 'bg-rose-100 text-rose-800 border border-rose-200'
-                            }`}
-                          >
-                            {isPresent ? (
-                              <>
-                                <Check className="w-3 h-3 text-emerald-600" />
-                                <span>Present</span>
-                              </>
-                            ) : (
-                              <>
-                                <XCircle className="w-3 h-3 text-rose-600" />
-                                <span>Absent</span>
-                              </>
-                            )}
-                          </span>
+                          {editingStatusRecordId === record.id ? (
+                            <select
+                              value={pendingStatus}
+                              onChange={(event) => setPendingStatus(event.target.value as AttendanceRecord['status'])}
+                              aria-label={`Attendance status for ${record.studentName}`}
+                              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            >
+                              <option value="present">Present</option>
+                              <option value="absent">Absent</option>
+                            </select>
+                          ) : (
+                            <span
+                              className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                                isPresent
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                  : 'bg-rose-100 text-rose-800 border border-rose-200'
+                              }`}
+                            >
+                              {isPresent ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                  <span>Present</span>
+                                </>
+                              ) : (
+                                <>
+                                  <XCircle className="w-3 h-3 text-rose-600" />
+                                  <span>Absent</span>
+                                </>
+                              )}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 px-4">
                           <div className="font-medium text-slate-800 text-[11px]">
@@ -696,28 +746,65 @@ export const AttendanceReports: React.FC = () => {
                           </div>
                         </td>
                         <td className="py-3 px-4 text-center">
-                          {matchedStudent ? (
-                            <button
-                              onClick={() => setCallStudent(matchedStudent)}
-                              title={`Call ${matchedStudent.guardianName} (${matchedStudent.guardianPhone})`}
-                              className={`p-1.5 rounded-lg transition inline-flex items-center gap-1 text-xs font-semibold ${
-                                !isPresent
-                                  ? 'bg-rose-100 hover:bg-rose-200 text-rose-800'
-                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                              }`}
-                            >
-                              <Phone className="w-3.5 h-3.5" />
-                              <span className="text-[10px] hidden sm:inline">
-                                {!isPresent ? 'Alert Guardian' : 'Call'}
-                              </span>
-                            </button>
+                          {editingStatusRecordId === record.id ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => void handleSaveStatus(record)}
+                                disabled={isSavingStatus}
+                                title="Save attendance status"
+                                className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2 py-1.5 text-emerald-800 hover:bg-emerald-200 disabled:opacity-50"
+                              >
+                                <Save className="h-3.5 w-3.5" />
+                                <span>Save</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingStatusRecordId(null)}
+                                disabled={isSavingStatus}
+                                title="Cancel status edit"
+                                className="rounded-lg bg-slate-100 p-1.5 text-slate-600 hover:bg-slate-200 disabled:opacity-50"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           ) : (
-                            <a
-                              href={`tel:${record.guardianPhone}`}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-emerald-100 text-slate-700 transition inline-flex items-center"
-                            >
-                              <Phone className="w-3.5 h-3.5" />
-                            </a>
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingStatusRecordId(record.id);
+                                  setPendingStatus(record.status);
+                                }}
+                                title="Edit attendance status"
+                                className="rounded-lg bg-slate-100 p-1.5 text-slate-600 hover:bg-emerald-50 hover:text-emerald-800"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              {matchedStudent ? (
+                                <button
+                                  onClick={() => setCallStudent(matchedStudent)}
+                                  title={`Call ${matchedStudent.guardianName} (${matchedStudent.guardianPhone})`}
+                                  className={`p-1.5 rounded-lg transition inline-flex items-center gap-1 text-xs font-semibold ${
+                                    !isPresent
+                                      ? 'bg-rose-100 hover:bg-rose-200 text-rose-800'
+                                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                                  }`}
+                                >
+                                  <Phone className="w-3.5 h-3.5" />
+                                  <span className="text-[10px] hidden sm:inline">
+                                    {!isPresent ? 'Alert' : 'Call'}
+                                  </span>
+                                </button>
+                              ) : (
+                                <a
+                                  href={`tel:${record.guardianPhone}`}
+                                  className="p-1.5 rounded-lg bg-slate-100 hover:bg-emerald-100 text-slate-700 transition inline-flex items-center"
+                                >
+                                  <Phone className="w-3.5 h-3.5" />
+                                </a>
+                              )}
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -729,178 +816,197 @@ export const AttendanceReports: React.FC = () => {
           </div>
         </div>
       )}
+      </div>}
 
-      {/* SHORT ATTENDANCE ALERT PANEL (< 75%) */}
-      {shortAttendanceStudents.length > 0 && (
-        <div className="bg-amber-50/90 border border-amber-300 rounded-2xl p-5 shadow-xs">
-          <div className="flex items-center justify-between pb-3 border-b border-amber-200">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center font-bold">
-                <AlertTriangle className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-amber-950">
-                  Short-Attendance Warning List (Non-Collegiate / Discollegiate)
-                </h3>
-                <p className="text-xs text-amber-800">
-                  According to BTEB rules, students below 75% attendance risk disbarment from final semester board examinations.
-                </p>
-              </div>
+      {reportTab === 'monthly' && (
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-2 border-b border-slate-200 bg-slate-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                <Layers className="h-4 w-4 text-emerald-700" />
+                {formatMonthName(selectedMonth)} Detailed Attendance
+              </h3>
+              <p className="mt-1 text-[11px] text-slate-500">Each date and subject session is shown separately for every filtered student.</p>
+            </div>
+            <div className="flex items-center gap-3 text-[11px] font-semibold">
+              <span className="text-emerald-800">P Present</span>
+              <span className="text-rose-700">A Absent</span>
+              <span className="rounded-md bg-white px-2.5 py-1.5 text-slate-600 shadow-sm">
+                {monthlyClassCount} {monthlyClassCount === 1 ? 'class' : 'classes'}
+              </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mt-4">
-            {shortAttendanceStudents.map(({ student, percentage, totalClasses, presentClasses }) => (
-              <div
-                key={student.id}
-                className="bg-white rounded-xl p-3.5 border border-amber-200 shadow-xs flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-xs font-bold text-slate-800">
-                      Roll: {student.roll}
-                    </span>
-                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800">
-                      {percentage}% Attendance
-                    </span>
-                  </div>
-                  <h4 className="text-sm font-bold text-slate-900 mt-1">{student.name}</h4>
-                  <p className="text-xs text-slate-500">
-                    {student.department} • {student.semester} • Sec {student.section}
-                  </p>
-                  <p className="text-xs text-slate-600 mt-1.5">
-                    Attended: <strong>{presentClasses}</strong> of {totalClasses} classes
-                  </p>
-                  <p className="text-xs text-slate-700 mt-1 font-mono">
-                    Guardian: {student.guardianName} ({student.guardianPhone})
-                  </p>
-                </div>
-
-                <div className="mt-3 pt-2.5 border-t border-slate-100">
-                  <button
-                    onClick={() => setCallStudent(student)}
-                    className="w-full flex items-center justify-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold py-1.5 px-3 rounded-lg text-xs transition"
-                  >
-                    <PhoneCall className="w-3.5 h-3.5" />
-                    <span>Call Guardian for Notice</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+          {monthlyStudentRows.length === 0 ? (
+            <div className="p-10 text-center">
+              <Calendar className="mx-auto mb-2 h-8 w-8 text-slate-300" />
+              <p className="text-xs font-semibold text-slate-700">No monthly attendance details found</p>
+              <p className="mt-1 text-[11px] text-slate-500">Adjust the filters or add students to view monthly attendance.</p>
+            </div>
+          ) : (
+            <div className="max-h-[70vh] overflow-auto">
+              <table className="w-full min-w-max border-separate border-spacing-0 text-left text-xs">
+                <thead className="sticky top-0 z-20 bg-slate-100 text-[10px] uppercase text-slate-700">
+                  <tr>
+                    <th className="sticky left-0 z-30 w-12 min-w-12 border-b border-r border-slate-200 bg-slate-100 px-2 py-3 text-center">S/N</th>
+                    <th className="sticky left-12 z-30 w-24 min-w-24 border-b border-r border-slate-200 bg-slate-100 px-3 py-3">Roll</th>
+                    <th className="sticky left-36 z-30 min-w-40 border-b border-r border-slate-200 bg-slate-100 px-3 py-3">Student Name</th>
+                    <th className="min-w-20 border-b border-r border-slate-200 bg-slate-100 px-2 py-3 text-center">Present</th>
+                    <th className="min-w-20 border-b border-r border-slate-200 bg-slate-100 px-2 py-3 text-center">Absent</th>
+                    <th className="min-w-20 border-b border-r border-slate-200 bg-slate-100 px-2 py-3 text-center">Rate</th>
+                    <th className="sticky right-0 z-30 min-w-28 border-b border-slate-200 bg-slate-100 px-2 py-3 text-center">Guardian Contact</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthlyStudentRows.map(({ student, total, present, absent, presentDates, absentDates, percentage }, index) => {
+                    const isExpanded = expandedStatusDates?.studentId === student.id;
+                    const expandedDates = isExpanded
+                      ? expandedStatusDates.status === 'present' ? presentDates : absentDates
+                      : [];
+                    return (
+                      <React.Fragment key={student.id}>
+                        <tr className="hover:bg-slate-50">
+                          <td className="sticky left-0 z-10 border-b border-r border-slate-100 bg-white px-2 py-3 text-center font-mono text-slate-500">{index + 1}</td>
+                          <td className="sticky left-12 z-10 border-b border-r border-slate-100 bg-white px-3 py-3 font-mono font-bold text-slate-800">{student.roll}</td>
+                          <td className="sticky left-36 z-10 border-b border-r border-slate-100 bg-white px-3 py-3 font-semibold text-slate-800">{student.name}</td>
+                          <td className="border-b border-r border-slate-100 px-2 py-3 text-center">
+                            <button
+                              type="button"
+                              disabled={presentDates.length === 0}
+                              aria-expanded={isExpanded && expandedStatusDates?.status === 'present'}
+                              onClick={() => setExpandedStatusDates(isExpanded && expandedStatusDates?.status === 'present' ? null : { studentId: student.id, status: 'present' })}
+                              title="Show present dates"
+                              className="rounded-md bg-emerald-50 px-2.5 py-1 font-mono font-bold text-emerald-800 hover:bg-emerald-100 disabled:cursor-default disabled:bg-transparent disabled:text-emerald-700"
+                            >{present}</button>
+                          </td>
+                          <td className="border-b border-r border-slate-100 px-2 py-3 text-center">
+                            <button
+                              type="button"
+                              disabled={absentDates.length === 0}
+                              aria-expanded={isExpanded && expandedStatusDates?.status === 'absent'}
+                              onClick={() => setExpandedStatusDates(isExpanded && expandedStatusDates?.status === 'absent' ? null : { studentId: student.id, status: 'absent' })}
+                              title="Show absent dates"
+                              className="rounded-md bg-rose-50 px-2.5 py-1 font-mono font-bold text-rose-800 hover:bg-rose-100 disabled:cursor-default disabled:bg-transparent disabled:text-rose-700"
+                            >{absent}</button>
+                          </td>
+                          <td className="border-b border-r border-slate-100 px-2 py-3 text-center font-mono font-bold text-slate-800">{percentage === null ? 'N/A' : `${percentage}%`}</td>
+                          <td className="sticky right-0 z-10 border-b border-slate-100 bg-white px-2 py-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setCallStudent(student)}
+                              title={`Contact guardian ${student.guardianName} at ${student.guardianPhone}`}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 font-semibold text-emerald-800 hover:bg-emerald-100"
+                            >
+                              <PhoneCall className="h-3.5 w-3.5" />
+                              <span>Contact</span>
+                            </button>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={7} className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`text-[11px] font-semibold ${expandedStatusDates.status === 'present' ? 'text-emerald-800' : 'text-rose-800'}`}>
+                                  {expandedStatusDates.status === 'present' ? 'Present dates:' : 'Absent dates:'}
+                                </span>
+                                {expandedDates.map((date) => (
+                                  <span key={date} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700">{formatDateLabel(date)}</span>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
 
-      {/* CUMULATIVE STUDENT ATTENDANCE RATIOS TABLE */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
-          <div>
-            <span className="font-bold text-slate-800">
-              Overall Student Attendance Ratios ({studentMetrics.length} Students)
-            </span>
-            <span className="text-slate-500 text-[11px] block sm:inline sm:ml-2">
-              • Filter: {formatMonthName(selectedMonth)} • {selectedSubject !== 'all' ? selectedSubject : 'All Subjects'}
-            </span>
+      {reportTab === 'overall' && (
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-4 border-b border-slate-200 bg-slate-50/70 p-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                <BarChart3 className="h-4 w-4 text-emerald-700" /> Overall Attendance
+              </h3>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Average of each student&apos;s monthly attendance rates through {formatMonthName(new Date().toISOString().substring(0, 7))}.
+              </p>
+            </div>
+            <label className="block w-full sm:w-56">
+              <span className="mb-1 block text-[10px] font-bold uppercase text-slate-600">Count attendance from</span>
+              <select
+                value={overallStartMonth}
+                onChange={(event) => setOverallStartMonth(event.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              >
+                {availableMonths
+                  .filter((month) => month <= new Date().toISOString().substring(0, 7))
+                  .sort()
+                  .map((month) => <option key={month} value={month}>{formatMonthName(month)}</option>)}
+              </select>
+            </label>
           </div>
-          <span className="text-slate-500 text-[11px]">
-            Infra Polytechnic Institute
-          </span>
-        </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-100/80 text-slate-700 uppercase font-semibold text-[11px] border-b border-slate-200">
-              <tr>
-                <th className="py-3 px-4 w-28">Roll No</th>
-                <th className="py-3 px-4 min-w-[180px]">Student Name</th>
-                <th className="py-3 px-4 min-w-[160px]">Department</th>
-                <th className="py-3 px-4 w-20 text-center">Section</th>
-                <th className="py-3 px-4 w-24 text-center">Classes</th>
-                <th className="py-3 px-4 w-24 text-center">Present</th>
-                <th className="py-3 px-4 w-24 text-center">Absent</th>
-                <th className="py-3 px-4 w-28 text-center">Percentage</th>
-                <th className="py-3 px-4 w-32 text-center">BTEB Status</th>
-                <th className="py-3 px-4 w-28 text-center">Guardian Call</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {studentMetrics.length === 0 ? (
-                <tr>
-                  <td colSpan={10} className="p-8 text-center text-slate-500">
-                    No students found matching current filters.
-                  </td>
-                </tr>
-              ) : (
-                studentMetrics.map(({ student, totalClasses, presentClasses, absentClasses, percentage, btebStatus }) => (
-                  <tr key={student.id} className="hover:bg-slate-50 transition">
-                    <td className="py-3 px-4 font-mono font-bold text-slate-900">
-                      {student.roll}
-                    </td>
-                    <td className="py-3 px-4 font-bold text-slate-900">{student.name}</td>
-                    <td className="py-3 px-4 text-slate-600">
-                      <div>{student.department}</div>
-                      <div className="text-[10px] text-slate-400">{student.semester}</div>
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
-                        {student.section}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-center font-mono font-medium text-slate-700">
-                      {totalClasses}
-                    </td>
-                    <td className="py-3 px-4 text-center font-mono font-bold text-emerald-700">
-                      {presentClasses}
-                    </td>
-                    <td className="py-3 px-4 text-center font-mono font-bold text-rose-700">
-                      {absentClasses}
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <span
-                        className={`font-mono font-bold ${
-                          percentage >= 75
-                            ? 'text-emerald-700'
-                            : percentage >= 60
-                            ? 'text-amber-700'
-                            : 'text-rose-700'
-                        }`}
-                      >
-                        {totalClasses > 0 ? `${percentage}%` : 'N/A'}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      {totalClasses > 0 ? (
-                        <span
-                          className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                            btebStatus === 'Collegiate'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : btebStatus === 'Non-Collegiate'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-rose-100 text-rose-800'
-                          }`}
-                        >
-                          {btebStatus}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-slate-400 italic">No classes yet</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <button
-                        onClick={() => setCallStudent(student)}
-                        title={`Call ${student.guardianName} (${student.guardianPhone})`}
-                        className="p-1.5 rounded-lg bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 transition"
-                      >
-                        <Phone className="w-3.5 h-3.5" />
-                      </button>
-                    </td>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-slate-100 px-4 py-3 text-[11px] text-slate-600">
+            <span>Period: <strong>{formatMonthName(overallStartMonth)} to {formatMonthName(new Date().toISOString().substring(0, 7))}</strong></span>
+            <span>Average across students: <strong className="text-emerald-800">{overallAveragePercentage === null ? 'N/A' : `${overallAveragePercentage}%`}</strong></span>
+            <span>{overallAttendanceRows.length} students</span>
+          </div>
+
+          {overallAttendanceRows.length === 0 ? (
+            <div className="p-10 text-center text-xs text-slate-500">No students match the selected filters.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-left text-xs">
+                <thead className="bg-slate-100 text-[10px] uppercase text-slate-700">
+                  <tr>
+                    <th className="w-14 px-3 py-3 text-center">S/N</th>
+                    <th className="w-28 px-3 py-3">Roll</th>
+                    <th className="min-w-40 px-3 py-3">Student Name</th>
+                    <th className="w-24 px-3 py-3 text-center">Classes</th>
+                    <th className="w-24 px-3 py-3 text-center">Present</th>
+                    <th className="w-24 px-3 py-3 text-center">Absent</th>
+                    <th className="w-36 px-3 py-3 text-center">Average Rate</th>
+                    <th className="w-32 px-3 py-3 text-center">Guardian Contact</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {overallAttendanceRows.map(({ student, total, present, absent, averagePercentage, monthsCounted }, index) => (
+                    <tr key={student.id} className="hover:bg-slate-50">
+                      <td className="px-3 py-3 text-center font-mono text-slate-500">{index + 1}</td>
+                      <td className="px-3 py-3 font-mono font-bold text-slate-800">{student.roll}</td>
+                      <td className="px-3 py-3 font-semibold text-slate-800">{student.name}</td>
+                      <td className="px-3 py-3 text-center font-mono text-slate-700">{total}</td>
+                      <td className="px-3 py-3 text-center font-mono font-bold text-emerald-700">{present}</td>
+                      <td className="px-3 py-3 text-center font-mono font-bold text-rose-700">{absent}</td>
+                      <td className="px-3 py-3 text-center">
+                        <span title={`${monthsCounted} month${monthsCounted === 1 ? '' : 's'} with attendance`} className={`rounded-md px-2.5 py-1 font-mono font-bold ${averagePercentage === null ? 'text-slate-400' : averagePercentage >= 75 ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`}>
+                          {averagePercentage === null ? 'N/A' : `${averagePercentage}%`}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          type="button"
+                          onClick={() => setCallStudent(student)}
+                          title={`Contact guardian ${student.guardianName} at ${student.guardianPhone}`}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 font-semibold text-emerald-800 hover:bg-emerald-100"
+                        >
+                          <PhoneCall className="h-3.5 w-3.5" /><span>Contact</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Guardian Call Dialog */}
       {callStudent && (

@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, UploadCloud, FileSpreadsheet, AlertCircle } from 'lucide-react';
 import { Department, Semester, Section, Student } from '../types';
-import { DEPARTMENTS, SEMESTERS, SECTIONS } from '../data/mockData';
+import { SEMESTERS, SECTIONS } from '../data/mockData';
 
 interface BulkImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImport: (students: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>[]) => Promise<number>;
+  departments: Department[];
   defaultDepartment: Department;
   defaultSemester: Semester;
 }
@@ -15,6 +16,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
   isOpen,
   onClose,
   onImport,
+  departments,
   defaultDepartment,
   defaultSemester,
 }) => {
@@ -28,6 +30,10 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
   );
   const [isImporting, setIsImporting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen && defaultDepartment) setDepartment(defaultDepartment);
+  }, [isOpen, defaultDepartment]);
 
   if (!isOpen) return null;
 
@@ -94,7 +100,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
             <div>
               <h3 className="text-base font-bold text-white">Batch Student Import</h3>
               <p className="text-xs text-slate-300">
-                Quickly add multiple students into roster and sync with Google Sheets
+                Quickly add multiple students to the Firebase roster
               </p>
             </div>
           </div>
@@ -118,11 +124,12 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
                 onChange={(e) => setDepartment(e.target.value as Department)}
                 className="w-full text-xs bg-white border border-slate-300 rounded p-1.5 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
               >
-                {DEPARTMENTS.map((d) => (
+                {departments.map((d) => (
                   <option key={d} value={d}>
                     {d}
                   </option>
                 ))}
+                {departments.length === 0 && <option value="">No departments configured</option>}
               </select>
             </div>
 
@@ -197,7 +204,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
           <button
             type="button"
             onClick={handleProcessImport}
-            disabled={isImporting}
+            disabled={isImporting || departments.length === 0}
             className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition disabled:opacity-50"
           >
             <FileSpreadsheet className="w-4 h-4" />

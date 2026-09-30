@@ -1,15 +1,4 @@
-import { Student, SubjectItem, Department, Semester, Section } from '../types';
-
-export const DEPARTMENTS: Department[] = [
-  'Computer Technology',
-  'Civil Technology',
-  'Electrical Technology',
-  'Mechanical Technology',
-  'Electronics Technology',
-  'Automobile Technology',
-  'Telecommunication Technology',
-  'Architecture Technology',
-];
+import { Student, SubjectItem, Semester, Section } from '../types';
 
 export const SEMESTERS: Semester[] = [
   '1st Semester',
@@ -33,7 +22,6 @@ export const INITIAL_STUDENTS: Student[] = [];
 // Optional quick-starter BTEB subjects preset for one-click setup
 export const BTEB_PRESET_SUBJECTS: SubjectItem[] = [
   // Computer Technology
-  { id: 'bteb_cst_401', code: '66641', name: 'Object Oriented Programming (Java/Python)', department: 'Computer Technology', semester: '4th Semester' },
   { id: 'bteb_cst_402', code: '66642', name: 'Data Communication', department: 'Computer Technology', semester: '4th Semester' },
   { id: 'bteb_cst_403', code: '66643', name: 'Web Development & Design', department: 'Computer Technology', semester: '4th Semester' },
   { id: 'bteb_cst_404', code: '66644', name: 'Microprocessor & Interfacing', department: 'Computer Technology', semester: '4th Semester' },

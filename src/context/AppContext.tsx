@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { User } from 'firebase/auth';
+import { deleteUser, User } from 'firebase/auth';
 import {
   Student,
   AttendanceRecord,
@@ -8,14 +8,11 @@ import {
   Department,
   Semester,
   Section,
-  SheetSyncStatus,
+  DatabaseStatus,
 } from '../types';
 import {
-  DEPARTMENTS,
   SEMESTERS,
   SECTIONS,
-  DEFAULT_SUBJECTS,
-  INITIAL_STUDENTS,
   BTEB_PRESET_SUBJECTS,
 } from '../data/mockData';
 import {
@@ -27,19 +24,20 @@ import {
   setAccessToken,
 } from '../services/authService';
 import {
-  createInstituteSpreadsheet,
-  findExistingSpreadsheet,
-  verifySpreadsheet,
   fetchStudentsFromSheet,
-  saveAllStudentsToSheet,
-  appendStudentToSheet,
   fetchAttendanceFromSheet,
-  appendAttendanceRecordsToSheet,
-  appendCallLogToSheet,
+  fetchCallLogsFromSheet,
   fetchSubjectsFromSheet,
-  saveAllSubjectsToSheet,
-  appendSubjectToSheet,
 } from '../services/sheetsService';
+import {
+  fetchAdminEmails,
+  fetchCollection,
+  removeDocument,
+  removeDocuments,
+  saveAdminEmails,
+  saveDocument,
+  saveDocuments,
+} from '../services/firestoreService';
 
 interface AttendanceFilter {
   department: Department;
@@ -56,6 +54,7 @@ interface AppContextType {
   attendanceRecords: AttendanceRecord[];
   callLogs: GuardianCallLog[];
   subjects: SubjectItem[];
+  departments: Department[];
   
   // Filter for Attendance & Rosters
   filter: AttendanceFilter;
@@ -65,33 +64,37 @@ interface AppContextType {
   addStudent: (student: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Student>;
   updateStudent: (student: Student) => Promise<void>;
   deleteStudent: (studentId: string) => Promise<void>;
+  deleteStudents: (studentIds: string[]) => Promise<void>;
   bulkImportStudents: (newStudents: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>[]) => Promise<number>;
   
   // Attendance & Calling
   saveAttendanceBatch: (records: AttendanceRecord[]) => Promise<void>;
+  clearAttendanceRange: (startMonth: string, endMonth: string, department?: Department | 'all') => Promise<number>;
   addCallLog: (log: Omit<GuardianCallLog, 'id' | 'callTime'>) => Promise<void>;
   
   // Subject Management
   addSubject: (code: string, name: string, department: Department, semester: Semester) => Promise<SubjectItem>;
   updateSubject: (subject: SubjectItem) => Promise<void>;
   deleteSubject: (subjectId: string) => Promise<void>;
+  addDepartment: (name: string) => Promise<string>;
+  updateDepartment: (currentName: string, name: string) => Promise<string>;
+  deleteDepartment: (name: string) => Promise<void>;
   seedPresetSubjects: () => Promise<void>;
   clearAllSubjects: () => Promise<void>;
   
-  // Auth & Google Sheets Sync
+  // Firebase database and authentication
   user: User | null;
-  sheetStatus: SheetSyncStatus;
+  databaseStatus: DatabaseStatus;
   loginWithGoogle: () => Promise<void>;
   logoutUser: () => Promise<void>;
-  syncWithSheets: () => Promise<void>;
-  setupNewSpreadsheet: () => Promise<void>;
-  linkExistingSpreadsheet: (idOrUrl: string) => Promise<void>;
-  clearSheetConnection: () => void;
+  refreshDatabase: () => Promise<void>;
+  importFromGoogleSheet: (idOrUrl: string) => Promise<void>;
+  importLocalDataToFirebase: () => Promise<void>;
 
   // Admin Email Whitelist Management
   authorizedAdmins: string[];
-  addAdminEmail: (email: string) => { success: boolean; message: string };
-  removeAdminEmail: (email: string) => { success: boolean; message: string };
+  addAdminEmail: (email: string) => Promise<{ success: boolean; message: string }>;
+  removeAdminEmail: (email: string) => Promise<{ success: boolean; message: string }>;
   isAuthorizedAdmin: (email?: string | null) => boolean;
 }
 
@@ -99,138 +102,39 @@ const AppContext = createContext<AppContextType | null>(null);
 
 const DEFAULT_ADMIN_EMAILS = ['0xayub.me@gmail.com'];
 
-const STORAGE_KEYS = {
-  STUDENTS: 'infra_polytechnic_students_v1',
-  ATTENDANCE: 'infra_polytechnic_attendance_v1',
-  CALL_LOGS: 'infra_polytechnic_call_logs_v1',
-  SUBJECTS: 'infra_polytechnic_subjects_v1',
-  SHEET_ID: 'infra_polytechnic_sheet_id',
-  SHEET_NAME: 'infra_polytechnic_sheet_name',
-  LAST_SYNC: 'infra_polytechnic_last_sync',
-  AUTHORIZED_ADMINS: 'infra_polytechnic_authorized_admins_v1',
-};
+const isLegacyMockStudent = (student: Pick<Student, 'id' | 'name'>) =>
+  student.id.startsWith('std_cst_') || student.name.trim().toLowerCase() === 'tanvir ahmed shanto';
+
+const isLegacyMockAttendance = (record: Pick<AttendanceRecord, 'studentId' | 'studentName'>) =>
+  record.studentId.startsWith('std_cst_') || record.studentName.trim().toLowerCase() === 'tanvir ahmed shanto';
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Students state (cleaned of mock data)
-  const [students, setStudents] = useState<Student[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.STUDENTS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          // Filter out legacy mock students if stored in browser
-          const clean = parsed.filter(
-            (s: Student) => !s.id?.startsWith('std_cst_') && s.name !== 'Tanvir Ahmed Shanto'
-          );
-          return clean;
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
-
-  // Attendance records state
-  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.ATTENDANCE);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((r: AttendanceRecord) => !r.studentId?.startsWith('std_cst_'));
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
-
-  // Guardian call logs state
-  const [callLogs, setCallLogs] = useState<GuardianCallLog[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.CALL_LOGS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((l: GuardianCallLog) => !l.studentId?.startsWith('std_cst_'));
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
-
-  // Subjects state (cleaned of hardcoded mock dummy subjects)
-  const [subjects, setSubjects] = useState<SubjectItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.SUBJECTS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const nonMock = parsed.filter(
-            (s: SubjectItem) =>
-              !['cst-401', 'cst-402', 'cst-403', 'cst-404', 'cst-405', 'cst-601', 'cst-602', 'cst-603', 'ct-401', 'ct-402', 'ct-403', 'et-401', 'et-402', 'et-403', 'mt-401', 'mt-402', 'mt-403'].includes(s.id)
-          );
-          return nonMock;
-        }
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
+  const [students, setStudents] = useState<Student[]>([]);
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
+  const [callLogs, setCallLogs] = useState<GuardianCallLog[]>([]);
+  const [subjects, setSubjects] = useState<SubjectItem[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentDocuments, setDepartmentDocuments] = useState<{ id: string; name: string }[]>([]);
 
   // Current session filter
   const todayDate = new Date().toISOString().split('T')[0];
   const [filter, setFilter] = useState<AttendanceFilter>({
-    department: 'Computer Technology',
-    semester: '4th Semester',
+    department: '',
+    semester: SEMESTERS[0],
     section: 'A',
-    subject: 'Object Oriented Programming (Java/Python)',
+    subject: '',
     date: todayDate,
     timeSlot: '09:00 AM - 09:45 AM',
   });
 
   // Auth & Google Sheets State
   const [user, setUser] = useState<User | null>(null);
-  const [authorizedAdmins, setAuthorizedAdmins] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.AUTHORIZED_ADMINS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((e: string) => e.trim().toLowerCase());
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return DEFAULT_ADMIN_EMAILS;
-  });
-
-  const [sheetStatus, setSheetStatus] = useState<SheetSyncStatus>({
+  const [authorizedAdmins, setAuthorizedAdmins] = useState<string[]>(DEFAULT_ADMIN_EMAILS);
+  const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus>({
     isConnected: false,
-    spreadsheetId: localStorage.getItem(STORAGE_KEYS.SHEET_ID),
-    spreadsheetName: localStorage.getItem(STORAGE_KEYS.SHEET_NAME) || 'Infra Polytechnic Institute Roster',
-    spreadsheetUrl: localStorage.getItem(STORAGE_KEYS.SHEET_ID)
-      ? `https://docs.google.com/spreadsheets/d/${localStorage.getItem(STORAGE_KEYS.SHEET_ID)}/edit`
-      : null,
-    lastSyncedAt: localStorage.getItem(STORAGE_KEYS.LAST_SYNC),
-    isSyncing: false,
+    isLoading: false,
     error: null,
   });
-
-  // Save authorized admins to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.AUTHORIZED_ADMINS, JSON.stringify(authorizedAdmins));
-    } catch (e) {
-      console.warn('Could not save authorized admin emails:', e);
-    }
-  }, [authorizedAdmins]);
 
   // Admin Email Management Functions
   const isAuthorizedAdmin = useCallback((email?: string | null): boolean => {
@@ -239,7 +143,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return authorizedAdmins.some((a) => a.toLowerCase() === clean);
   }, [authorizedAdmins]);
 
-  const addAdminEmail = useCallback((email: string): { success: boolean; message: string } => {
+  const addAdminEmail = useCallback(async (email: string): Promise<{ success: boolean; message: string }> => {
     const clean = email.trim().toLowerCase();
     if (!clean || !clean.includes('@') || !clean.includes('.')) {
       return { success: false, message: 'Please enter a valid email address.' };
@@ -247,51 +151,85 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (authorizedAdmins.some((a) => a.toLowerCase() === clean)) {
       return { success: false, message: 'This email is already an authorized administrator.' };
     }
-    setAuthorizedAdmins((prev) => [...prev, clean]);
-    return { success: true, message: `"${clean}" has been added as an authorized administrator.` };
+    const updated = [...authorizedAdmins, clean];
+    try {
+      await saveAdminEmails(updated);
+      setAuthorizedAdmins(updated);
+      return { success: true, message: `"${clean}" has been added as an authorized administrator.` };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Could not save admin access to Firebase.' };
+    }
   }, [authorizedAdmins]);
 
-  const removeAdminEmail = useCallback((email: string): { success: boolean; message: string } => {
+  const removeAdminEmail = useCallback(async (email: string): Promise<{ success: boolean; message: string }> => {
     const clean = email.trim().toLowerCase();
     if (authorizedAdmins.length <= 1) {
       return { success: false, message: 'Cannot remove the last remaining admin. At least one admin email is required.' };
     }
-    setAuthorizedAdmins((prev) => prev.filter((a) => a.toLowerCase() !== clean));
-    return { success: true, message: `"${clean}" has been removed from authorized administrators.` };
+    const updated = authorizedAdmins.filter((a) => a.toLowerCase() !== clean);
+    try {
+      await saveAdminEmails(updated);
+      setAuthorizedAdmins(updated);
+      return { success: true, message: `"${clean}" has been removed from authorized administrators.` };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Could not update Firebase admin access.' };
+    }
   }, [authorizedAdmins]);
 
-  // Persist locally
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
-    } catch (e) {
-      console.warn('Could not save students locally:', e);
-    }
-  }, [students]);
+  const mergeById = <T extends { id: string }>(existing: T[], incoming: T[]): T[] => {
+    const merged = new Map(existing.map((item) => [item.id, item]));
+    incoming.forEach((item) => merged.set(item.id, item));
+    return Array.from(merged.values());
+  };
 
-  useEffect(() => {
+  const loadDatabase = async (currentUser: User) => {
+    setDatabaseStatus({ isConnected: true, isLoading: true, error: null });
     try {
-      localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify(attendanceRecords));
-    } catch (e) {
-      console.warn('Could not save attendance locally:', e);
+      const [adminEmails, loadedStudents, loadedAttendance, loadedCalls, loadedSubjects, loadedDepartments] = await Promise.all([
+        fetchAdminEmails(),
+        fetchCollection<Student>('students'),
+        fetchCollection<AttendanceRecord>('attendance'),
+        fetchCollection<GuardianCallLog>('guardianCallLogs'),
+        fetchCollection<SubjectItem>('subjects'),
+        fetchCollection<{ id: string; name: string }>('departments'),
+      ]);
+      const normalizedAdmins = adminEmails.map((email) => email.trim().toLowerCase());
+      if (!normalizedAdmins.length && currentUser.email?.toLowerCase() === DEFAULT_ADMIN_EMAILS[0]) {
+        await saveAdminEmails(DEFAULT_ADMIN_EMAILS);
+      }
+      setAuthorizedAdmins(normalizedAdmins.length ? normalizedAdmins : DEFAULT_ADMIN_EMAILS);
+      const cleanStudents = loadedStudents.filter((student) => !isLegacyMockStudent(student));
+      const cleanAttendance = loadedAttendance.filter((record) => !isLegacyMockAttendance(record));
+      const cleanCalls = loadedCalls.filter((log) => !isLegacyMockAttendance(log));
+      await Promise.all([
+        ...loadedStudents.filter(isLegacyMockStudent).map((student) => removeDocument('students', student.id)),
+        ...loadedAttendance.filter(isLegacyMockAttendance).map((record) => removeDocument('attendance', record.id)),
+        ...loadedCalls.filter(isLegacyMockAttendance).map((log) => removeDocument('guardianCallLogs', log.id)),
+      ]);
+      setStudents(cleanStudents);
+      setAttendanceRecords(cleanAttendance);
+      setCallLogs(cleanCalls);
+      const cleanSubjects = loadedSubjects.filter((subject) =>
+        subject.id !== 'bteb_cst_401' && subject.code !== '66641' && subject.name !== 'Object Oriented Programming (Java/Python)'
+      );
+      const removedSubjects = loadedSubjects.filter((subject) => !cleanSubjects.includes(subject));
+      await Promise.all(removedSubjects.map((subject) => removeDocument('subjects', subject.id)));
+      setSubjects(cleanSubjects);
+      setDepartmentDocuments(loadedDepartments);
+      setDepartments(loadedDepartments.map((department) => department.name).filter(Boolean));
+      if (filter.subject === 'Object Oriented Programming (Java/Python)') {
+        setFilter((current) => ({ ...current, subject: '' }));
+      }
+      setDatabaseStatus({ isConnected: true, isLoading: false, error: null });
+    } catch (error) {
+      setDatabaseStatus({
+        isConnected: false,
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Could not load Firebase data.',
+      });
+      throw error;
     }
-  }, [attendanceRecords]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.CALL_LOGS, JSON.stringify(callLogs));
-    } catch (e) {
-      console.warn('Could not save call logs locally:', e);
-    }
-  }, [callLogs]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.SUBJECTS, JSON.stringify(subjects));
-    } catch (e) {
-      console.warn('Could not save subjects locally:', e);
-    }
-  }, [subjects]);
+  };
 
   // Auth initialization
   useEffect(() => {
@@ -299,17 +237,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       (currentUser, token) => {
         setUser(currentUser);
         setAccessToken(token);
-        setSheetStatus((prev) => ({ ...prev, isConnected: true }));
+        void loadDatabase(currentUser).catch(() => undefined);
       },
       () => {
         setUser(null);
         setAccessToken(null);
-        setSheetStatus((prev) => ({ ...prev, isConnected: false }));
+        setStudents([]);
+        setAttendanceRecords([]);
+        setCallLogs([]);
+        setSubjects([]);
+        setDepartments([]);
+        setDepartmentDocuments([]);
+        setDatabaseStatus({ isConnected: false, isLoading: false, error: null });
       }
     );
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    setFilter((current) => ({
+      ...current,
+      department: departments.includes(current.department) ? current.department : departments[0] || '',
+    }));
+  }, [departments]);
 
   // Update default subject whenever department or semester changes
   useEffect(() => {
@@ -321,255 +272,132 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!matchingSubjects.some((s) => s.name === filter.subject)) {
         setFilter((prev) => ({ ...prev, subject: matchingSubjects[0].name }));
       }
+    } else if (filter.subject) {
+      setFilter((prev) => ({ ...prev, subject: '' }));
     }
   }, [filter.department, filter.semester, subjects, filter.subject]);
 
-  // Google Sign In
+  // Google account authentication and Firestore data loading.
   const loginWithGoogle = async () => {
-    setSheetStatus((prev) => ({ ...prev, isSyncing: true, error: null }));
-    try {
-      const result = await googleSignIn();
-      if (result) {
-        const userEmail = result.user.email?.toLowerCase().trim();
-        const isAllowed = userEmail && authorizedAdmins.some((a) => a.toLowerCase().trim() === userEmail);
-        
-        if (!isAllowed) {
-          await authLogout();
-          setUser(null);
-          setAccessToken(null);
-          setSheetStatus((prev) => ({ ...prev, isConnected: false, isSyncing: false, error: 'Unauthorized email' }));
-          sessionStorage.removeItem('ipi_admin_session');
-          throw new Error(
-            `Access Denied: The Google account "${userEmail || 'Unknown'}" is not authorized as an administrator. Authorized account: ${authorizedAdmins.join(', ')}`
-          );
-        }
-
-        setUser(result.user);
-        setSheetStatus((prev) => ({ ...prev, isConnected: true }));
-        
-        // Check if there is an existing spreadsheet in Drive or localStorage
-        let sheetId = localStorage.getItem(STORAGE_KEYS.SHEET_ID);
-        let sheetName = localStorage.getItem(STORAGE_KEYS.SHEET_NAME);
-
-        if (!sheetId && result.accessToken) {
-          try {
-            const found = await findExistingSpreadsheet(result.accessToken);
-            if (found) {
-              sheetId = found.id;
-              sheetName = found.name;
-            }
-          } catch {
-            // Sheets scope not yet authorized; user can connect later
-          }
-        }
-
-        if (sheetId) {
-          localStorage.setItem(STORAGE_KEYS.SHEET_ID, sheetId);
-          if (sheetName) localStorage.setItem(STORAGE_KEYS.SHEET_NAME, sheetName);
-          
-          setSheetStatus((prev) => ({
-            ...prev,
-            spreadsheetId: sheetId,
-            spreadsheetName: sheetName || 'Infra Polytechnic Institute Roster',
-            spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`,
-          }));
-
-          // Trigger sync if token exists
-          if (result.accessToken) {
-            try {
-              await pullDataFromSheets(sheetId, result.accessToken);
-            } catch {
-              // Ignore initial sync failure if sheets permission not yet granted
-            }
-          }
-        }
+    const result = await googleSignIn();
+    if (!result) return;
+    const email = result.user.email?.trim().toLowerCase();
+    const admins = await fetchAdminEmails();
+    const allowedAdmins = admins.length ? admins : DEFAULT_ADMIN_EMAILS;
+    if (!email || !allowedAdmins.includes(email)) {
+      const accessDeniedMessage = `Access denied for ${email || 'unknown account'}. Ask an administrator to add this email.`;
+      try {
+        await deleteUser(result.user);
+      } catch (error) {
+        await authLogout();
+        const reason = error instanceof Error ? error.message : 'Unknown Firebase error.';
+        throw new Error(`${accessDeniedMessage} Could not remove the Firebase Authentication account: ${reason}`);
       }
-    } catch (err: unknown) {
-      const errObj = err as { code?: string; message?: string };
-      if (
-        errObj?.code === 'auth/popup-closed-by-user' || 
-        errObj?.code === 'auth/cancelled-popup-request' ||
-        errObj?.message?.includes('popup-closed-by-user')
-      ) {
-        setSheetStatus((prev) => ({ ...prev, isSyncing: false, error: null }));
-        return;
-      }
-      const message = err instanceof Error ? err.message : 'Login failed';
-      setSheetStatus((prev) => ({ ...prev, error: message }));
-      throw err;
-    } finally {
-      setSheetStatus((prev) => ({ ...prev, isSyncing: false }));
+      throw new Error(`${accessDeniedMessage} The Firebase Authentication account was removed.`);
     }
+    setUser(result.user);
+    setAccessToken(result.accessToken);
+    await loadDatabase(result.user);
   };
 
   const logoutUser = async () => {
     await authLogout();
     setUser(null);
-    setSheetStatus((prev) => ({ ...prev, isConnected: false }));
+    setStudents([]);
+    setAttendanceRecords([]);
+    setCallLogs([]);
+    setSubjects([]);
+    setDepartments([]);
+    setDepartmentDocuments([]);
+    setDatabaseStatus({ isConnected: false, isLoading: false, error: null });
   };
 
-  // Pull data from Google Sheets into state
-  const pullDataFromSheets = async (sheetId: string, token: string) => {
-    try {
-      await verifySpreadsheet(sheetId, token);
-      const sheetStudents = await fetchStudentsFromSheet(sheetId, token);
-      const sheetAttendance = await fetchAttendanceFromSheet(sheetId, token);
-      const sheetSubjects = await fetchSubjectsFromSheet(sheetId, token);
-
-      if (sheetStudents.length > 0) {
-        setStudents(sheetStudents);
-      } else if (students.length > 0) {
-        await saveAllStudentsToSheet(sheetId, students, token);
-      }
-
-      if (sheetAttendance.length > 0) {
-        setAttendanceRecords(sheetAttendance);
-      }
-
-      if (sheetSubjects.length > 0) {
-        setSubjects(sheetSubjects);
-      } else if (subjects.length > 0) {
-        await saveAllSubjectsToSheet(sheetId, subjects, token);
-      }
-
-      const now = new Date().toLocaleString();
-      localStorage.setItem(STORAGE_KEYS.LAST_SYNC, now);
-      setSheetStatus((prev) => ({
-        ...prev,
-        lastSyncedAt: now,
-        error: null,
-      }));
-    } catch (err: unknown) {
-      console.error('Failed to pull from Google Sheets:', err);
-      const message = err instanceof Error ? err.message : 'Error syncing sheet';
-      setSheetStatus((prev) => ({ ...prev, error: message }));
-    }
+  const refreshDatabase = async () => {
+    if (!user) throw new Error('Sign in before loading Firebase data.');
+    await loadDatabase(user);
   };
 
-  // Create brand new Google Sheet
-  const setupNewSpreadsheet = async () => {
+  const importFromGoogleSheet = async (idOrUrl: string) => {
+    requireDatabaseAccess();
     let token = await getAccessToken();
-    if (!token) {
-      token = await authorizeGoogleSheets();
-    }
-    if (!token) {
-      throw new Error('Google Sheets authorization required to create spreadsheet in Drive.');
-    }
+    if (!token) token = await authorizeGoogleSheets();
+    if (!token) throw new Error('Google Sheets access was not granted.');
 
-    setSheetStatus((prev) => ({ ...prev, isSyncing: true, error: null }));
-    try {
-      const created = await createInstituteSpreadsheet(token);
-      localStorage.setItem(STORAGE_KEYS.SHEET_ID, created.id);
-      localStorage.setItem(STORAGE_KEYS.SHEET_NAME, created.name);
-
-      setSheetStatus((prev) => ({
-        ...prev,
-        spreadsheetId: created.id,
-        spreadsheetName: created.name,
-        spreadsheetUrl: created.url,
-      }));
-
-      // Seed newly created sheet with current students and subjects
-      if (students.length > 0) {
-        await saveAllStudentsToSheet(created.id, students, token);
-      }
-      if (subjects.length > 0) {
-        await saveAllSubjectsToSheet(created.id, subjects, token);
-      }
-
-      const now = new Date().toLocaleString();
-      localStorage.setItem(STORAGE_KEYS.LAST_SYNC, now);
-      setSheetStatus((prev) => ({ ...prev, lastSyncedAt: now, error: null }));
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to create spreadsheet';
-      setSheetStatus((prev) => ({ ...prev, error: message }));
-      throw err;
-    } finally {
-      setSheetStatus((prev) => ({ ...prev, isSyncing: false }));
-    }
-  };
-
-  // Link existing Google Sheet by ID or URL
-  const linkExistingSpreadsheet = async (idOrUrl: string) => {
-    let token = await getAccessToken();
-    if (!token) {
-      token = await authorizeGoogleSheets();
-    }
-    if (!token) {
-      throw new Error('Google Sheets authorization required to link spreadsheet.');
-    }
-
-    let sheetId = idOrUrl.trim();
-    // Extract ID from full URL if provided
     const match = idOrUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-    if (match) {
-      sheetId = match[1];
-    }
+    const spreadsheetId = match?.[1] || idOrUrl.trim();
+    if (!spreadsheetId) throw new Error('Enter a valid Google Spreadsheet URL or ID.');
 
-    if (!sheetId) {
-      throw new Error('Invalid Google Sheet ID or URL.');
-    }
-
-    setSheetStatus((prev) => ({ ...prev, isSyncing: true, error: null }));
+    setDatabaseStatus({ isConnected: true, isLoading: true, error: null });
     try {
-      const info = await verifySpreadsheet(sheetId, token);
-      localStorage.setItem(STORAGE_KEYS.SHEET_ID, sheetId);
-      localStorage.setItem(STORAGE_KEYS.SHEET_NAME, info.name);
-
-      setSheetStatus((prev) => ({
-        ...prev,
-        spreadsheetId: sheetId,
-        spreadsheetName: info.name,
-        spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`,
-      }));
-
-      await pullDataFromSheets(sheetId, token);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to link spreadsheet';
-      setSheetStatus((prev) => ({ ...prev, error: message }));
-      throw err;
-    } finally {
-      setSheetStatus((prev) => ({ ...prev, isSyncing: false }));
+      const [importedStudents, importedAttendance, importedSubjects, importedCallLogs] = await Promise.all([
+        fetchStudentsFromSheet(spreadsheetId, token),
+        fetchAttendanceFromSheet(spreadsheetId, token),
+        fetchSubjectsFromSheet(spreadsheetId, token),
+        fetchCallLogsFromSheet(spreadsheetId, token),
+      ]);
+      const cleanStudents = importedStudents.filter((student) => !isLegacyMockStudent(student));
+      const cleanAttendance = importedAttendance.filter((record) => !isLegacyMockAttendance(record));
+      const cleanCallLogs = importedCallLogs.filter((log) => !isLegacyMockAttendance(log));
+      const mergedStudents = mergeById(students, cleanStudents);
+      const mergedAttendance = mergeById(attendanceRecords, cleanAttendance);
+      const mergedSubjects = mergeById(subjects, importedSubjects);
+      const mergedCallLogs = mergeById(callLogs, cleanCallLogs);
+      await Promise.all([
+        saveDocuments('students', mergedStudents),
+        saveDocuments('attendance', mergedAttendance),
+        saveDocuments('subjects', mergedSubjects),
+        saveDocuments('guardianCallLogs', mergedCallLogs),
+      ]);
+      setStudents(mergedStudents);
+      setAttendanceRecords(mergedAttendance);
+      setSubjects(mergedSubjects);
+      setCallLogs(mergedCallLogs);
+      setDatabaseStatus({ isConnected: true, isLoading: false, error: null });
+    } catch (error) {
+      setDatabaseStatus({
+        isConnected: true,
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Google Sheet import failed.',
+      });
+      throw error;
     }
   };
 
-  const clearSheetConnection = () => {
-    localStorage.removeItem(STORAGE_KEYS.SHEET_ID);
-    localStorage.removeItem(STORAGE_KEYS.SHEET_NAME);
-    localStorage.removeItem(STORAGE_KEYS.LAST_SYNC);
-    setSheetStatus((prev) => ({
-      ...prev,
-      spreadsheetId: null,
-      spreadsheetName: null,
-      spreadsheetUrl: null,
-      lastSyncedAt: null,
-      error: null,
-    }));
+  const importLocalDataToFirebase = async () => {
+    requireDatabaseAccess();
+    const readLocal = <T,>(key: string): T[] => {
+      try {
+        const parsed: unknown = JSON.parse(localStorage.getItem(key) || '[]');
+        return Array.isArray(parsed) ? parsed as T[] : [];
+      } catch {
+        return [];
+      }
+    };
+    const localStudents = mergeById(students, readLocal<Student>('infra_polytechnic_students_v1').filter((student) => !isLegacyMockStudent(student)));
+    const localAttendance = mergeById(attendanceRecords, readLocal<AttendanceRecord>('infra_polytechnic_attendance_v1').filter((record) => !isLegacyMockAttendance(record)));
+    const localCallLogs = mergeById(callLogs, readLocal<GuardianCallLog>('infra_polytechnic_call_logs_v1').filter((log) => !isLegacyMockAttendance(log)));
+    const localSubjects = mergeById(subjects, readLocal<SubjectItem>('infra_polytechnic_subjects_v1'));
+    await Promise.all([
+      saveDocuments('students', localStudents),
+      saveDocuments('attendance', localAttendance),
+      saveDocuments('guardianCallLogs', localCallLogs),
+      saveDocuments('subjects', localSubjects),
+    ]);
+    localStorage.removeItem('infra_polytechnic_students_v1');
+    localStorage.removeItem('infra_polytechnic_attendance_v1');
+    localStorage.removeItem('infra_polytechnic_call_logs_v1');
+    localStorage.removeItem('infra_polytechnic_subjects_v1');
+    await loadDatabase(user!);
   };
 
-  // Manual Sync trigger
-  const syncWithSheets = async () => {
-    let token = await getAccessToken();
-    if (!token) {
-      token = await authorizeGoogleSheets();
-      if (!token) return;
-    }
-
-    if (!sheetStatus.spreadsheetId) {
-      await setupNewSpreadsheet();
-      return;
-    }
-
-    setSheetStatus((prev) => ({ ...prev, isSyncing: true, error: null }));
-    try {
-      await pullDataFromSheets(sheetStatus.spreadsheetId, token);
-    } finally {
-      setSheetStatus((prev) => ({ ...prev, isSyncing: false }));
-    }
+  const requireDatabaseAccess = () => {
+    if (!user) throw new Error('Sign in to Firebase before changing institute data.');
+    if (!databaseStatus.isConnected) throw new Error(databaseStatus.error || 'Firebase is not connected.');
   };
 
   // Student CRUD: Add
   const addStudent = async (studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>): Promise<Student> => {
+    requireDatabaseAccess();
     const now = new Date().toISOString();
     const newStudent: Student = {
       ...studentData,
@@ -578,73 +406,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     };
 
-    const updatedList = [newStudent, ...students];
-    setStudents(updatedList);
-
-    // If Google Sheet is connected, append or push
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await appendStudentToSheet(sheetStatus.spreadsheetId, newStudent, token);
-        const nowStr = new Date().toLocaleString();
-        localStorage.setItem(STORAGE_KEYS.LAST_SYNC, nowStr);
-        setSheetStatus((prev) => ({ ...prev, lastSyncedAt: nowStr }));
-      } catch (err) {
-        console.warn('Could not append student to Google Sheet:', err);
-      }
-    }
+    await saveDocument('students', newStudent);
+    setStudents((current) => [newStudent, ...current]);
 
     return newStudent;
   };
 
   // Student CRUD: Update
   const updateStudent = async (student: Student): Promise<void> => {
+    requireDatabaseAccess();
     const now = new Date().toISOString();
     const updatedStudent: Student = {
       ...student,
       updatedAt: now,
     };
 
-    const updatedList = students.map((s) => (s.id === student.id ? updatedStudent : s));
-    setStudents(updatedList);
-
-    // Sync full list to Google Sheet if connected
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await saveAllStudentsToSheet(sheetStatus.spreadsheetId, updatedList, token);
-        const nowStr = new Date().toLocaleString();
-        localStorage.setItem(STORAGE_KEYS.LAST_SYNC, nowStr);
-        setSheetStatus((prev) => ({ ...prev, lastSyncedAt: nowStr }));
-      } catch (err) {
-        console.warn('Failed to update student in Google Sheet:', err);
-      }
-    }
+    await saveDocument('students', updatedStudent);
+    setStudents((current) => current.map((item) => item.id === student.id ? updatedStudent : item));
   };
 
   // Student CRUD: Delete (Destructive action - requires caller to show confirmation dialog)
   const deleteStudent = async (studentId: string): Promise<void> => {
+    requireDatabaseAccess();
+    await removeDocument('students', studentId);
     const updatedList = students.filter((s) => s.id !== studentId);
     setStudents(updatedList);
+  };
 
-    // Sync updated list to Google Sheets
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await saveAllStudentsToSheet(sheetStatus.spreadsheetId, updatedList, token);
-        const nowStr = new Date().toLocaleString();
-        localStorage.setItem(STORAGE_KEYS.LAST_SYNC, nowStr);
-        setSheetStatus((prev) => ({ ...prev, lastSyncedAt: nowStr }));
-      } catch (err) {
-        console.warn('Failed to delete student from Google Sheet:', err);
-      }
-    }
+  const deleteStudents = async (studentIds: string[]): Promise<void> => {
+    requireDatabaseAccess();
+    const uniqueIds = [...new Set(studentIds)];
+    if (uniqueIds.length === 0) return;
+    await removeDocuments('students', uniqueIds);
+    const idsToDelete = new Set(uniqueIds);
+    setStudents((current) => current.filter((student) => !idsToDelete.has(student.id)));
   };
 
   // Student CRUD: Bulk Import
   const bulkImportStudents = async (
     newStudents: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>[]
   ): Promise<number> => {
+    requireDatabaseAccess();
     const now = new Date().toISOString();
     const formatted: Student[] = newStudents.map((s, idx) => ({
       ...s,
@@ -653,27 +455,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     }));
 
+    await saveDocuments('students', formatted);
     const combined = [...formatted, ...students];
     setStudents(combined);
-
-    // Sync to Google Sheet
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await saveAllStudentsToSheet(sheetStatus.spreadsheetId, combined, token);
-        const nowStr = new Date().toLocaleString();
-        localStorage.setItem(STORAGE_KEYS.LAST_SYNC, nowStr);
-        setSheetStatus((prev) => ({ ...prev, lastSyncedAt: nowStr }));
-      } catch (err) {
-        console.warn('Failed to bulk sync to Google Sheet:', err);
-      }
-    }
 
     return formatted.length;
   };
 
-  // Save Attendance Batch to state and Google Sheets
+  // Save attendance records and public summaries to Firestore.
   const saveAttendanceBatch = async (records: AttendanceRecord[]): Promise<void> => {
+    requireDatabaseAccess();
     // Merge or replace records for the same student on the same date + subject
     const existingFiltered = attendanceRecords.filter((r) => {
       const match = records.some(
@@ -685,52 +476,115 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return !match;
     });
 
+    const replacedRecords = attendanceRecords.filter((existing) => records.some((record) =>
+      record.studentId === existing.studentId && record.date === existing.date && record.subject === existing.subject
+    ));
+    await Promise.all(replacedRecords.map((record) => removeDocument('attendance', record.id)));
+    await saveDocuments('attendance', records);
     const updatedRecords = [...records, ...existingFiltered];
     setAttendanceRecords(updatedRecords);
+  };
 
-    // Sync to Google Sheets
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await appendAttendanceRecordsToSheet(sheetStatus.spreadsheetId, records, token);
-        const nowStr = new Date().toLocaleString();
-        localStorage.setItem(STORAGE_KEYS.LAST_SYNC, nowStr);
-        setSheetStatus((prev) => ({ ...prev, lastSyncedAt: nowStr }));
-      } catch (err) {
-        console.error('Failed to append attendance to Google Sheet:', err);
-        throw err;
-      }
-    }
+  const clearAttendanceRange = async (startMonth: string, endMonth: string, department: Department | 'all' = 'all'): Promise<number> => {
+    requireDatabaseAccess();
+    const fromMonth = startMonth <= endMonth ? startMonth : endMonth;
+    const toMonth = startMonth <= endMonth ? endMonth : startMonth;
+
+    const matching = attendanceRecords.filter((record) => {
+      const recordMonth = record.date.substring(0, 7);
+      const matchesMonth = recordMonth >= fromMonth && recordMonth <= toMonth;
+      const matchesDepartment = department === 'all' || record.department === department;
+      return matchesMonth && matchesDepartment;
+    });
+
+    if (matching.length === 0) return 0;
+
+    await Promise.all(matching.map((record) => removeDocument('attendance', record.id)));
+    const remaining = attendanceRecords.filter((record) => {
+      const recordMonth = record.date.substring(0, 7);
+      const matchesMonth = recordMonth >= fromMonth && recordMonth <= toMonth;
+      const matchesDepartment = department === 'all' || record.department === department;
+      return !(matchesMonth && matchesDepartment);
+    });
+
+    setAttendanceRecords(remaining);
+    return matching.length;
   };
 
   // Log Guardian Call
   const addCallLog = async (logData: Omit<GuardianCallLog, 'id' | 'callTime'>): Promise<void> => {
+    requireDatabaseAccess();
     const newLog: GuardianCallLog = {
       ...logData,
       id: `call_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       callTime: new Date().toLocaleString(),
     };
 
-    setCallLogs((prev) => [newLog, ...prev]);
-
-    // Sync to Google Sheets
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await appendCallLogToSheet(sheetStatus.spreadsheetId, newLog, token);
-      } catch (err) {
-        console.warn('Could not sync call log to Google Sheet:', err);
-      }
-    }
+    await saveDocument('guardianCallLogs', newLog);
+    setCallLogs((current) => [newLog, ...current]);
   };
 
   // Subject Management: Add
+  const addDepartment = async (name: string): Promise<string> => {
+    requireDatabaseAccess();
+    const cleanName = name.trim();
+    if (!cleanName) throw new Error('Department name is required.');
+    if (departments.some((department) => department.trim().toLowerCase() === cleanName.toLowerCase())) {
+      throw new Error('This department already exists.');
+    }
+    const departmentDocument = {
+      id: `dept_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: cleanName,
+    };
+    await saveDocument('departments', departmentDocument);
+    setDepartmentDocuments((current) => [...current, departmentDocument]);
+    setDepartments((current) => [...current, cleanName]);
+    return cleanName;
+  };
+
+  const updateDepartment = async (currentName: string, name: string): Promise<string> => {
+    requireDatabaseAccess();
+    const cleanName = name.trim();
+    if (!cleanName) throw new Error('Department name is required.');
+    if (departments.some((department) => department !== currentName && department.trim().toLowerCase() === cleanName.toLowerCase())) {
+      throw new Error('This department already exists.');
+    }
+    const departmentDocument = departmentDocuments.find((department) => department.name === currentName);
+    if (!departmentDocument) throw new Error('Department not found. Refresh the database and try again.');
+    const updatedDocument = { ...departmentDocument, name: cleanName };
+    const updatedStudents = students.map((student) => student.department === currentName ? { ...student, department: cleanName } : student);
+    const updatedAttendance = attendanceRecords.map((record) => record.department === currentName ? { ...record, department: cleanName } : record);
+    const updatedSubjects = subjects.map((subject) => subject.department === currentName ? { ...subject, department: cleanName } : subject);
+    await Promise.all([
+      saveDocument('departments', updatedDocument),
+      saveDocuments('students', updatedStudents.filter((student, index) => students[index].department === currentName)),
+      saveDocuments('attendance', updatedAttendance.filter((record, index) => attendanceRecords[index].department === currentName)),
+      saveDocuments('subjects', updatedSubjects.filter((subject, index) => subjects[index].department === currentName)),
+    ]);
+    setDepartments((current) => current.map((department) => department === currentName ? cleanName : department));
+    setDepartmentDocuments((current) => current.map((department) => department.id === departmentDocument.id ? updatedDocument : department));
+    setStudents(updatedStudents);
+    setAttendanceRecords(updatedAttendance);
+    setSubjects(updatedSubjects);
+    return cleanName;
+  };
+
+  const deleteDepartment = async (name: string): Promise<void> => {
+    requireDatabaseAccess();
+    const departmentDocument = departmentDocuments.find((department) => department.name === name);
+    if (!departmentDocument) throw new Error('Department not found. Refresh the database and try again.');
+    await removeDocument('departments', departmentDocument.id);
+    setDepartmentDocuments((current) => current.filter((department) => department.id !== departmentDocument.id));
+    setDepartments((current) => current.filter((department) => department !== name));
+  };
+
   const addSubject = async (
     code: string,
     name: string,
     department: Department,
     semester: Semester
   ): Promise<SubjectItem> => {
+    requireDatabaseAccess();
     const newSub: SubjectItem = {
       id: `sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       code: code.trim(),
@@ -738,24 +592,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       department,
       semester,
     };
-    const updated = [...subjects, newSub];
-    setSubjects(updated);
-
-    // Sync to Google Sheets if connected
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await appendSubjectToSheet(sheetStatus.spreadsheetId, newSub, token);
-      } catch (err) {
-        console.warn('Could not sync new subject to Google Sheet:', err);
-      }
-    }
+    await saveDocument('subjects', newSub);
+    setSubjects((current) => [...current, newSub]);
 
     return newSub;
   };
 
   // Subject Management: Update
   const updateSubject = async (updatedSubject: SubjectItem): Promise<void> => {
+    requireDatabaseAccess();
     const updatedList = subjects.map((s) =>
       s.id === updatedSubject.id
         ? {
@@ -765,37 +610,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         : s
     );
+    await saveDocument('subjects', updatedList.find((item) => item.id === updatedSubject.id)!);
     setSubjects(updatedList);
-
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await saveAllSubjectsToSheet(sheetStatus.spreadsheetId, updatedList, token);
-      } catch (err) {
-        console.warn('Could not update subject in Google Sheet:', err);
-      }
-    }
   };
 
   // Subject Management: Delete
   const deleteSubject = async (subjectId: string): Promise<void> => {
+    requireDatabaseAccess();
+    await removeDocument('subjects', subjectId);
     const updatedList = subjects.filter((s) => s.id !== subjectId);
     setSubjects(updatedList);
-
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await saveAllSubjectsToSheet(sheetStatus.spreadsheetId, updatedList, token);
-      } catch (err) {
-        console.warn('Could not delete subject in Google Sheet:', err);
-      }
-    }
   };
 
   // Subject Management: Seed preset BTEB subjects
   const seedPresetSubjects = async (): Promise<void> => {
+    requireDatabaseAccess();
     const combined = [...subjects];
-    BTEB_PRESET_SUBJECTS.forEach((preset) => {
+    BTEB_PRESET_SUBJECTS.filter((preset) => departments.includes(preset.department)).forEach((preset) => {
       const exists = combined.some(
         (s) =>
           s.code === preset.code &&
@@ -806,30 +637,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         combined.push(preset);
       }
     });
+    await saveDocuments('subjects', combined);
     setSubjects(combined);
-
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await saveAllSubjectsToSheet(sheetStatus.spreadsheetId, combined, token);
-      } catch (err) {
-        console.warn('Could not sync seeded subjects to Google Sheet:', err);
-      }
-    }
   };
 
   // Subject Management: Clear all subjects
   const clearAllSubjects = async (): Promise<void> => {
+    requireDatabaseAccess();
+    await Promise.all(subjects.map((subject) => removeDocument('subjects', subject.id)));
     setSubjects([]);
-
-    const token = await getAccessToken();
-    if (token && sheetStatus.spreadsheetId) {
-      try {
-        await saveAllSubjectsToSheet(sheetStatus.spreadsheetId, [], token);
-      } catch (err) {
-        console.warn('Could not clear subjects in Google Sheet:', err);
-      }
-    }
   };
 
   return (
@@ -839,27 +655,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         attendanceRecords,
         callLogs,
         subjects,
+        departments,
         filter,
         setFilter,
         addStudent,
         updateStudent,
         deleteStudent,
+        deleteStudents,
         bulkImportStudents,
         saveAttendanceBatch,
+        clearAttendanceRange,
         addCallLog,
         addSubject,
         updateSubject,
         deleteSubject,
+        addDepartment,
+        updateDepartment,
+        deleteDepartment,
         seedPresetSubjects,
         clearAllSubjects,
         user,
-        sheetStatus,
+        databaseStatus,
         loginWithGoogle,
         logoutUser,
-        syncWithSheets,
-        setupNewSpreadsheet,
-        linkExistingSpreadsheet,
-        clearSheetConnection,
+        refreshDatabase,
+        importFromGoogleSheet,
+        importLocalDataToFirebase,
         authorizedAdmins,
         addAdminEmail,
         removeAdminEmail,

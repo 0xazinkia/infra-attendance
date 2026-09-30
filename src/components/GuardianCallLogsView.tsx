@@ -113,7 +113,7 @@ export const GuardianCallLogsView: React.FC = () => {
             </div>
             <h4 className="text-sm font-bold text-slate-800">No Guardian Calls Recorded Yet</h4>
             <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
-              When students are marked absent, clicking &quot;Call Guardian&quot; or &quot;Notice / Log&quot; allows you to record the conversation outcome directly into this log and Google Sheets.
+              When students are marked absent, use &quot;Call Guardian&quot; or &quot;Notice / Log&quot; to save the conversation outcome in Firebase.
             </p>
           </div>
         ) : (

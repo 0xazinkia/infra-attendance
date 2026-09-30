@@ -1,12 +1,4 @@
-export type Department = 
-  | 'Computer Technology'
-  | 'Civil Technology'
-  | 'Electrical Technology'
-  | 'Mechanical Technology'
-  | 'Electronics Technology'
-  | 'Automobile Technology'
-  | 'Telecommunication Technology'
-  | 'Architecture Technology';
+export type Department = string;
 
 export type Semester = 
   | '1st Semester'
@@ -83,12 +75,8 @@ export interface GuardianCallLog {
   note?: string;
 }
 
-export interface SheetSyncStatus {
+export interface DatabaseStatus {
   isConnected: boolean;
-  spreadsheetId: string | null;
-  spreadsheetName: string | null;
-  spreadsheetUrl: string | null;
-  lastSyncedAt: string | null;
-  isSyncing: boolean;
+  isLoading: boolean;
   error: string | null;
 }

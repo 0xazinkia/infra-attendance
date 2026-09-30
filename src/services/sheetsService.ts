@@ -280,7 +280,7 @@ export async function fetchStudentsFromSheet(spreadsheetId: string, token: strin
       id: row[idIdx] || `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       roll: row[rollIdx] || '',
       name: row[nameIdx] || '',
-      department: (row[deptIdx] as Student['department']) || 'Computer Technology',
+      department: (row[deptIdx] as Student['department']) || '',
       semester: (row[semIdx] as Student['semester']) || '1st Semester',
       section: (row[secIdx] as Student['section']) || 'A',
       studentPhone: row[phoneIdx] || '',
@@ -445,7 +445,7 @@ export async function fetchAttendanceFromSheet(spreadsheetId: string, token: str
     .map((row) => ({
       id: row[idIdx] || `att_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       date: row[dateIdx] || '',
-      department: (row[deptIdx] as AttendanceRecord['department']) || 'Computer Technology',
+      department: (row[deptIdx] as AttendanceRecord['department']) || '',
       semester: (row[semIdx] as AttendanceRecord['semester']) || '1st Semester',
       subject: row[subIdx] || '',
       section: (row[secIdx] as AttendanceRecord['section']) || 'A',
@@ -457,6 +457,52 @@ export async function fetchAttendanceFromSheet(spreadsheetId: string, token: str
       recordedAt: row[recAtIdx] || new Date().toISOString(),
       recordedBy: row[recByIdx] || 'Teacher',
     }));
+}
+
+/**
+ * Overwrite the attendance roster after removing legacy test records.
+ */
+export async function saveAllAttendanceRecordsToSheet(
+  spreadsheetId: string,
+  records: AttendanceRecord[],
+  token: string
+): Promise<void> {
+  const clearResponse = await fetch(`${SHEETS_API_BASE}/${spreadsheetId}/values/Attendance!A2:Z:clear`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  if (!clearResponse.ok) {
+    throw new Error(`Failed to clean attendance records in Google Sheet: ${clearResponse.statusText}`);
+  }
+
+  if (records.length === 0) return;
+
+  const rows = records.map((record) => [
+    record.id,
+    record.date,
+    record.department,
+    record.semester,
+    record.subject,
+    record.section,
+    record.studentId,
+    record.roll,
+    record.studentName,
+    record.status,
+    record.guardianPhone,
+    record.recordedAt,
+    record.recordedBy || 'Infra Faculty',
+  ]);
+  const writeResponse = await fetch(
+    `${SHEETS_API_BASE}/${spreadsheetId}/values/Attendance!A2:M?valueInputOption=USER_ENTERED`,
+    {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: rows }),
+    }
+  );
+  if (!writeResponse.ok) {
+    throw new Error(`Failed to save cleaned attendance records: ${writeResponse.statusText}`);
+  }
 }
 
 /**
@@ -536,6 +582,34 @@ export async function appendCallLogToSheet(
   });
 }
 
+export async function fetchCallLogsFromSheet(
+  spreadsheetId: string,
+  token: string
+): Promise<GuardianCallLog[]> {
+  const response = await fetch(`${SHEETS_API_BASE}/${spreadsheetId}/values/GuardianCallLogs!A1:J`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error(`Failed to fetch guardian call logs: ${response.statusText}`);
+  const data = await response.json();
+  const rows: string[][] = data.values || [];
+  if (!rows.length) return [];
+  const first = rows[0].map((cell) => (cell || '').toLowerCase().trim());
+  const hasHeader = first.some((cell) => cell.includes('log') || cell.includes('student'));
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+  return dataRows.filter((row) => row.length > 0 && row[0]).map((row) => ({
+    id: row[0],
+    studentId: row[1] || '',
+    studentName: row[2] || '',
+    roll: row[3] || '',
+    guardianName: row[4] || '',
+    guardianPhone: row[5] || '',
+    callTime: row[6] || '',
+    reason: row[7] || '',
+    status: row[8] || '',
+    note: row[9] || '',
+  }));
+}
+
 /**
  * Fetch all subjects from the 'Subjects' sheet.
  */
@@ -562,7 +636,7 @@ export async function fetchSubjectsFromSheet(spreadsheetId: string, token: strin
         id: `sub_${row[0] || ''}_${row[2] || ''}_${row[3] || ''}`.replace(/[^a-zA-Z0-9_]/g, '_'),
         code: row[0] || '',
         name: row[1] || '',
-        department: (row[2] as SubjectItem['department']) || 'Computer Technology',
+        department: (row[2] as SubjectItem['department']) || '',
         semester: (row[3] as SubjectItem['semester']) || '1st Semester',
       }));
   } catch (err) {
@@ -579,35 +653,33 @@ export async function saveAllSubjectsToSheet(
   subjects: SubjectItem[],
   token: string
 ): Promise<void> {
-  try {
-    // Clear existing subjects rows starting from row 2
-    await fetch(`${SHEETS_API_BASE}/${spreadsheetId}/values/Subjects!A2:D:clear`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-    });
+  const clearResponse = await fetch(`${SHEETS_API_BASE}/${spreadsheetId}/values/Subjects!A2:D:clear`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+  if (!clearResponse.ok) {
+    throw new Error(`Could not clear subjects in Google Sheet: ${clearResponse.statusText}`);
+  }
 
-    if (subjects.length === 0) return;
+  if (subjects.length === 0) return;
 
-    const rows = subjects.map((s) => [
-      s.code,
-      s.name,
-      s.department,
-      s.semester,
-    ]);
-
-    await fetch(`${SHEETS_API_BASE}/${spreadsheetId}/values/Subjects!A2:D?valueInputOption=USER_ENTERED`, {
+  const rows = subjects.map((s) => [s.code, s.name, s.department, s.semester]);
+  const writeResponse = await fetch(
+    `${SHEETS_API_BASE}/${spreadsheetId}/values/Subjects!A2:D?valueInputOption=USER_ENTERED`,
+    {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ values: rows }),
-    });
-  } catch (err) {
-    console.warn('Could not save subjects to Google Sheet:', err);
+    }
+  );
+  if (!writeResponse.ok) {
+    throw new Error(`Could not save subjects to Google Sheet: ${writeResponse.statusText}`);
   }
 }
 
@@ -619,24 +691,20 @@ export async function appendSubjectToSheet(
   subject: SubjectItem,
   token: string
 ): Promise<void> {
-  try {
-    const row = [
-      subject.code,
-      subject.name,
-      subject.department,
-      subject.semester,
-    ];
-
-    await fetch(`${SHEETS_API_BASE}/${spreadsheetId}/values/Subjects!A:D:append?valueInputOption=USER_ENTERED`, {
+  const row = [subject.code, subject.name, subject.department, subject.semester];
+  const response = await fetch(
+    `${SHEETS_API_BASE}/${spreadsheetId}/values/Subjects!A:D:append?valueInputOption=USER_ENTERED`,
+    {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ values: [row] }),
-    });
-  } catch (err) {
-    console.warn('Could not append subject to Google Sheet:', err);
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Could not append subject to Google Sheet: ${response.statusText}`);
   }
 }
 

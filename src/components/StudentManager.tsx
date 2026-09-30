@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Users, 
   UserPlus, 
@@ -16,14 +16,14 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Student, Department, Semester, Section } from '../types';
-import { DEPARTMENTS, SEMESTERS, SECTIONS } from '../data/mockData';
+import { SEMESTERS, SECTIONS } from '../data/mockData';
 import { StudentModal } from './StudentModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { BulkImportModal } from './BulkImportModal';
 import { GuardianCallModal } from './GuardianCallModal';
 
 export const StudentManager: React.FC = () => {
-  const { students, addStudent, updateStudent, deleteStudent, bulkImportStudents } = useApp();
+  const { students, departments, addStudent, updateStudent, deleteStudent, deleteStudents, bulkImportStudents } = useApp();
 
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState('');
@@ -40,6 +40,13 @@ export const StudentManager: React.FC = () => {
 
   const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [callModalStudent, setCallModalStudent] = useState<Student | null>(null);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const selectAllRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (selectedDept !== 'all' && !departments.includes(selectedDept)) setSelectedDept('all');
+  }, [departments, selectedDept]);
 
   // Filtered students
   const filteredStudents = useMemo(() => {
@@ -55,8 +62,44 @@ export const StudentManager: React.FC = () => {
       const matchSec = selectedSection === 'all' || s.section === selectedSection;
 
       return matchSearch && matchDept && matchSem && matchSec;
-    });
+    }).sort((first, second) => (Number(first.roll) || 0) - (Number(second.roll) || 0));
   }, [students, searchQuery, selectedDept, selectedSemester, selectedSection]);
+
+  const allVisibleSelected = filteredStudents.length > 0 && filteredStudents.every((student) => selectedStudentIds.includes(student.id));
+  const someVisibleSelected = filteredStudents.some((student) => selectedStudentIds.includes(student.id));
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someVisibleSelected && !allVisibleSelected;
+    }
+  }, [allVisibleSelected, someVisibleSelected]);
+
+  const toggleVisibleStudents = (shouldSelect: boolean) => {
+    const visibleIds = new Set(filteredStudents.map((student) => student.id));
+    setSelectedStudentIds((current) => shouldSelect
+      ? [...new Set([...current, ...visibleIds])]
+      : current.filter((id) => !visibleIds.has(id))
+    );
+  };
+
+  const handleDeleteSelected = async () => {
+    const selectedIds = selectedStudentIds.filter((id) => students.some((student) => student.id === id));
+    if (selectedIds.length === 0) return;
+    const confirmed = window.confirm(
+      `Permanently delete ${selectedIds.length} selected student record(s)? Attendance and guardian call history will remain.`
+    );
+    if (!confirmed) return;
+
+    setIsBulkDeleting(true);
+    try {
+      await deleteStudents(selectedIds);
+      setSelectedStudentIds((current) => current.filter((id) => !selectedIds.includes(id)));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Could not delete the selected student records.');
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   const handleOpenAdd = () => {
     setStudentToEdit(null);
@@ -135,11 +178,20 @@ export const StudentManager: React.FC = () => {
               <span>Student & Guardian Directory (CRUD Portal)</span>
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Insert new students, update academic records, maintain guardian contact numbers & sync with Google Sheets
+              Insert new students, update academic records, and maintain guardian contact numbers in Firebase
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => void handleDeleteSelected()}
+              disabled={selectedStudentIds.length === 0 || isBulkDeleting}
+              title="Permanently delete selected student records"
+              className="flex items-center gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>{isBulkDeleting ? 'Deleting...' : `Delete selected (${selectedStudentIds.length})`}</span>
+            </button>
             <button
               onClick={() => setIsBulkOpen(true)}
               className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition"
@@ -186,7 +238,7 @@ export const StudentManager: React.FC = () => {
               className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-700 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
               <option value="all">All Departments</option>
-              {DEPARTMENTS.map((dept) => (
+              {departments.map((dept) => (
                 <option key={dept} value={dept}>
                   {dept}
                 </option>
@@ -261,6 +313,19 @@ export const StudentManager: React.FC = () => {
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-100/80 text-slate-700 uppercase font-semibold text-[11px] border-b border-slate-200">
                 <tr>
+                  <th className="py-3 px-3 w-10">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={(event) => toggleVisibleStudents(event.target.checked)}
+                      disabled={filteredStudents.length === 0 || isBulkDeleting}
+                      aria-label="Select all filtered students"
+                      title="Select all filtered students"
+                      className="h-4 w-4 accent-emerald-700"
+                    />
+                  </th>
+                  <th className="py-3 px-4 w-14">S/N</th>
                   <th className="py-3 px-4 w-28">Roll No</th>
                   <th className="py-3 px-4 min-w-[180px]">Student Name</th>
                   <th className="py-3 px-4 min-w-[160px]">Dept / Semester</th>
@@ -271,8 +336,22 @@ export const StudentManager: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {filteredStudents.map((student) => (
+                {filteredStudents.map((student, index) => (
                   <tr key={student.id} className="hover:bg-slate-50 transition">
+                    <td className="py-3 px-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedStudentIds.includes(student.id)}
+                        onChange={(event) => setSelectedStudentIds((current) => event.target.checked
+                          ? [...current, student.id]
+                          : current.filter((id) => id !== student.id)
+                        )}
+                        disabled={isBulkDeleting}
+                        aria-label={`Select ${student.name}, roll ${student.roll}`}
+                        className="h-4 w-4 accent-emerald-700"
+                      />
+                    </td>
+                    <td className="py-3 px-4 text-slate-500">{index + 1}</td>
                     {/* Roll */}
                     <td className="py-3 px-4 font-mono">
                       <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
@@ -386,8 +465,8 @@ export const StudentManager: React.FC = () => {
       <StudentModal
         isOpen={isModalOpen}
         studentToEdit={studentToEdit}
-        defaultDepartment={selectedDept !== 'all' ? (selectedDept as Department) : 'Computer Technology'}
-        defaultSemester={selectedSemester !== 'all' ? (selectedSemester as Semester) : '4th Semester'}
+        defaultDepartment={selectedDept !== 'all' ? (selectedDept as Department) : departments[0] || ''}
+        defaultSemester={selectedSemester !== 'all' ? (selectedSemester as Semester) : SEMESTERS[0]}
         defaultSection={selectedSection !== 'all' ? (selectedSection as Section) : 'A'}
         onClose={() => {
           setIsModalOpen(false);
@@ -406,14 +485,16 @@ export const StudentManager: React.FC = () => {
         }}
         onConfirm={async (id) => {
           await deleteStudent(id);
+          setSelectedStudentIds((current) => current.filter((selectedId) => selectedId !== id));
         }}
       />
 
       {/* Bulk Import Modal */}
       <BulkImportModal
         isOpen={isBulkOpen}
-        defaultDepartment={selectedDept !== 'all' ? (selectedDept as Department) : 'Computer Technology'}
-        defaultSemester={selectedSemester !== 'all' ? (selectedSemester as Semester) : '4th Semester'}
+        departments={departments}
+        defaultDepartment={selectedDept !== 'all' ? (selectedDept as Department) : departments[0] || ''}
+        defaultSemester={selectedSemester !== 'all' ? (selectedSemester as Semester) : SEMESTERS[0]}
         onClose={() => setIsBulkOpen(false)}
         onImport={async (newStudents) => {
           return await bulkImportStudents(newStudents);

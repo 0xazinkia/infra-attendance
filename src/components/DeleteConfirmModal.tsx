@@ -57,7 +57,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
             <p className="font-semibold text-rose-900">⚠️ Irreversible Action:</p>
             <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-rose-700">
               <li>This student will be removed from future attendance rosters.</li>
-              <li>Row will be removed and synced in Google Sheets.</li>
+              <li>Student record will be removed from Firebase.</li>
               <li>Guardian contact ({student.guardianPhone}) will be detached.</li>
             </ul>
           </div>
