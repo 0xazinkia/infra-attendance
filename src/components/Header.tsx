@@ -22,7 +22,7 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         {/* Brand identity */}
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 ring-2 ring-emerald-400/30">
+          <div className="flex h-11 w-11 items-center justify-center">
             <img src="/Infra-white.png" alt="Infra Polytechnic Institute logo" className="h-9 w-9 object-contain" />
           </div>
           <div>
