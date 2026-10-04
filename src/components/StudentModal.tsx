@@ -77,7 +77,6 @@ export const StudentModal: React.FC<StudentModalProps> = ({
     if (!name.trim()) err.name = 'Student Name is required';
     if (!roll.trim()) err.roll = 'Board Roll number is required';
     if (!department) err.department = 'Add a department before enrolling students';
-    if (!guardianPhone.trim()) err.guardianPhone = 'Guardian Phone number is required for calling';
     setErrors(err);
     return Object.keys(err).length === 0;
   };
@@ -96,7 +95,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
           semester,
           section,
           studentPhone: studentPhone.trim(),
-          guardianName: guardianName.trim() || 'Parent/Guardian',
+          guardianName: guardianName.trim(),
           guardianPhone: guardianPhone.trim(),
           guardianRelation,
           address: address.trim(),
@@ -271,7 +270,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Guardian Name *
+                  Guardian Name (Optional)
                 </label>
                 <input
                   type="text"
@@ -284,7 +283,7 @@ export const StudentModal: React.FC<StudentModalProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Guardian Phone *
+                  Guardian Phone (Optional)
                 </label>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-rose-500">
@@ -295,14 +294,9 @@ export const StudentModal: React.FC<StudentModalProps> = ({
                     value={guardianPhone}
                     onChange={(e) => setGuardianPhone(e.target.value)}
                     placeholder="018XXXXXXXX"
-                    className={`w-full pl-8 font-mono text-xs bg-slate-50 border rounded-lg p-2.5 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none ${
-                      errors.guardianPhone ? 'border-rose-500 bg-rose-50/30' : 'border-slate-300'
-                    }`}
+                    className="w-full pl-8 font-mono text-xs bg-slate-50 border border-slate-300 rounded-lg p-2.5 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                   />
                 </div>
-                {errors.guardianPhone && (
-                  <span className="text-[11px] text-rose-600 mt-0.5 block">{errors.guardianPhone}</span>
-                )}
               </div>
 
               <div>

@@ -57,8 +57,8 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
       const roll = parts[0];
       const name = parts[1];
       const studentPhone = parts[2] || '';
-      const guardianName = parts[3] || 'Guardian';
-      const guardianPhone = parts[4] || parts[2] || '';
+      const guardianName = parts[3] || '';
+      const guardianPhone = parts[4] || '';
       const guardianRelation = (parts[5] as Student['guardianRelation']) || 'Father';
 
       parsed.push({
@@ -173,7 +173,7 @@ export const BulkImportModal: React.FC<BulkImportModalProps> = ({
               Comma-Separated Lines (CSV Format)
             </label>
             <p className="text-[11px] text-slate-500 mb-2">
-              Format per line: <code className="bg-slate-100 px-1 py-0.5 rounded text-emerald-800">Roll, Student Name, Student Phone, Guardian Name, Guardian Phone, Relation</code>
+              Format per line: <code className="bg-slate-100 px-1 py-0.5 rounded text-emerald-800">Roll, Student Name, Student Phone, Guardian Name, Guardian Phone, Relation</code>. Guardian details are optional.
             </p>
             <textarea
               rows={8}
