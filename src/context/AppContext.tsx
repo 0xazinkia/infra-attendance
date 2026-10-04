@@ -71,6 +71,7 @@ interface AppContextType {
   // Attendance & Calling
   saveAttendanceBatch: (records: AttendanceRecord[]) => Promise<void>;
   clearAttendanceRange: (startMonth: string, endMonth: string, department?: Department | 'all') => Promise<number>;
+  deleteAttendanceSessions: (dates: string[], department: Department, semester: Semester, section: Section, subject: string) => Promise<number>;
   addCallLog: (log: Omit<GuardianCallLog, 'id' | 'callTime'>) => Promise<void>;
   
   // Subject Management
@@ -578,6 +579,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return matching.length;
   };
 
+  const deleteAttendanceSessions = async (
+    dates: string[],
+    department: Department,
+    semester: Semester,
+    section: Section,
+    subject: string
+  ): Promise<number> => {
+    requireDatabaseAccess();
+    const selectedDates = new Set(dates);
+    const matching = attendanceRecords.filter((record) =>
+      selectedDates.has(record.date) &&
+      record.department === department &&
+      record.semester === semester &&
+      record.section === section &&
+      record.subject === subject
+    );
+
+    if (matching.length === 0) return 0;
+
+    const matchingIds = new Set(matching.map((record) => record.id));
+    enqueueWrite(removeDocuments('attendance', Array.from(matchingIds)));
+    setAttendanceRecords(attendanceRecords.filter((record) => !matchingIds.has(record.id)));
+    return matching.length;
+  };
+
   // Log Guardian Call
   const addCallLog = async (logData: Omit<GuardianCallLog, 'id' | 'callTime'>): Promise<void> => {
     requireDatabaseAccess();
@@ -733,6 +759,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bulkImportStudents,
         saveAttendanceBatch,
         clearAttendanceRange,
+        deleteAttendanceSessions,
         addCallLog,
         addSubject,
         updateSubject,

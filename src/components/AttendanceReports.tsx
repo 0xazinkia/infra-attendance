@@ -17,7 +17,8 @@ import {
   Layers,
   Pencil,
   Save,
-  X
+  X,
+  Trash2
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { SEMESTERS, SECTIONS } from '../data/mockData';
@@ -25,7 +26,7 @@ import { Department, Semester, Section, Student, AttendanceRecord } from '../typ
 import { GuardianCallModal } from './GuardianCallModal';
 
 export const AttendanceReports: React.FC = () => {
-  const { students, attendanceRecords, subjects, departments, saveAttendanceBatch } = useApp();
+  const { students, attendanceRecords, subjects, departments, saveAttendanceBatch, deleteAttendanceSessions } = useApp();
 
   // Primary Filters
   const [selectedDept, setSelectedDept] = useState<string>('');
@@ -43,6 +44,9 @@ export const AttendanceReports: React.FC = () => {
 
   // Selected Date state for date-wise attendance inspection
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [isSelectingSessionDates, setIsSelectingSessionDates] = useState(false);
+  const [selectedSessionDates, setSelectedSessionDates] = useState<string[]>([]);
+  const [isDeletingSessions, setIsDeletingSessions] = useState(false);
   const [dateFilterStatus, setDateFilterStatus] = useState<'all' | 'present' | 'absent'>('all');
   const [editingStatusRecordId, setEditingStatusRecordId] = useState<string | null>(null);
   const [pendingStatus, setPendingStatus] = useState<AttendanceRecord['status']>('present');
@@ -64,6 +68,29 @@ export const AttendanceReports: React.FC = () => {
       window.alert(error instanceof Error ? error.message : 'Could not update attendance status.');
     } finally {
       setIsSavingStatus(false);
+    }
+  };
+
+  const handleSessionDelete = async () => {
+    if (!isSelectingSessionDates) {
+      setIsSelectingSessionDates(true);
+      setSelectedSessionDates([]);
+      return;
+    }
+    if (selectedSessionDates.length === 0) {
+      setIsSelectingSessionDates(false);
+      return;
+    }
+
+    setIsDeletingSessions(true);
+    try {
+      await deleteAttendanceSessions(selectedSessionDates, selectedDept, selectedSemester as Semester, selectedSection as Section, selectedSubject);
+      setSelectedSessionDates([]);
+      setIsSelectingSessionDates(false);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Could not delete selected attendance sessions.');
+    } finally {
+      setIsDeletingSessions(false);
     }
   };
 
@@ -183,47 +210,63 @@ export const AttendanceReports: React.FC = () => {
     return classDatesInMonth[0].date;
   }, [classDatesInMonth, selectedDate]);
 
-  // Detailed attendance records for the active selected date
-  const selectedDateAttendance = useMemo(() => {
+  // Include current roster members without a saved record as absent for this session.
+  const activeDateRecords = useMemo(() => {
     if (!activeSelectedDate) return [];
 
-    return attendanceRecords
-      .filter((r) => {
-        const matchDate = r.date === activeSelectedDate;
-        const matchDept = r.department === selectedDept;
-        const matchSem = r.semester === selectedSemester;
-        const matchSec = r.section === selectedSection;
-        const matchSub = r.subject === selectedSubject;
-        const matchStatus = dateFilterStatus === 'all' || r.status === dateFilterStatus;
-        const matchSearch =
-          searchQuery.trim() === '' ||
-          r.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.roll.includes(searchQuery);
+    const recordsForDate = attendanceRecords.filter((record) =>
+      record.date === activeSelectedDate &&
+      record.department === selectedDept &&
+      record.semester === selectedSemester &&
+      record.section === selectedSection &&
+      record.subject === selectedSubject
+    );
+    const missingStudentRecords: AttendanceRecord[] = students
+      .filter((student) =>
+        student.department === selectedDept &&
+        student.semester === selectedSemester &&
+        student.section === selectedSection &&
+        !recordsForDate.some((record) => record.studentId === student.id || record.roll === student.roll)
+      )
+      .map((student) => ({
+        id: `missing_${student.id}_${activeSelectedDate}_${selectedSubject}`,
+        date: activeSelectedDate,
+        department: student.department,
+        semester: student.semester,
+        subject: selectedSubject,
+        section: student.section,
+        studentId: student.id,
+        roll: student.roll,
+        studentName: student.name,
+        status: 'absent',
+        guardianPhone: student.guardianPhone,
+        recordedAt: student.createdAt,
+      }));
 
-        return matchDate && matchDept && matchSem && matchSec && matchSub && matchStatus && matchSearch;
-      })
+    return [...recordsForDate, ...missingStudentRecords]
       .sort((a, b) => (Number(a.roll) || 0) - (Number(b.roll) || 0));
-  }, [attendanceRecords, activeSelectedDate, selectedDept, selectedSemester, selectedSection, selectedSubject, dateFilterStatus, searchQuery]);
+  }, [attendanceRecords, students, activeSelectedDate, selectedDept, selectedSemester, selectedSection, selectedSubject]);
+
+  const selectedDateAttendance = useMemo(() => activeDateRecords.filter((record) => {
+    const matchStatus = dateFilterStatus === 'all' || record.status === dateFilterStatus;
+    const matchSearch =
+      searchQuery.trim() === '' ||
+      record.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      record.roll.includes(searchQuery);
+    return matchStatus && matchSearch;
+  }), [activeDateRecords, dateFilterStatus, searchQuery]);
 
   // Stats for the active selected date
   const activeDateStats = useMemo(() => {
     if (!activeSelectedDate) return null;
-    const allRecordsForDate = attendanceRecords.filter((r) => {
-      const matchDate = r.date === activeSelectedDate;
-      const matchDept = r.department === selectedDept;
-      const matchSem = r.semester === selectedSemester;
-      const matchSec = r.section === selectedSection;
-      const matchSub = r.subject === selectedSubject;
-      return matchDate && matchDept && matchSem && matchSec && matchSub;
-    });
 
-    const total = allRecordsForDate.length;
-    const present = allRecordsForDate.filter((r) => r.status === 'present').length;
-    const absent = allRecordsForDate.filter((r) => r.status === 'absent').length;
+    const total = activeDateRecords.length;
+    const present = activeDateRecords.filter((record) => record.status === 'present').length;
+    const absent = activeDateRecords.filter((record) => record.status === 'absent').length;
     const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
 
     return { total, present, absent, percentage };
-  }, [attendanceRecords, activeSelectedDate, selectedDept, selectedSemester, selectedSection, selectedSubject]);
+  }, [activeDateRecords, activeSelectedDate]);
 
   // Relevant Students for Cumulative Report
   const relevantStudents = useMemo(() => {
@@ -541,9 +584,26 @@ export const AttendanceReports: React.FC = () => {
             </p>
           </div>
 
-          <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-3 py-1 rounded-lg">
-            {classDatesInMonth.length} {classDatesInMonth.length === 1 ? 'Class Session' : 'Class Sessions'} Found
-          </span>
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={() => void handleSessionDelete()}
+              disabled={isDeletingSessions}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50 ${
+                selectedSessionDates.length > 0
+                  ? 'bg-rose-600 text-white hover:bg-rose-700'
+                  : isSelectingSessionDates
+                    ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                    : 'bg-white text-rose-700 border border-rose-200 hover:bg-rose-50'
+              }`}
+            >
+              {selectedSessionDates.length > 0 ? <Trash2 className="h-3.5 w-3.5" /> : null}
+              {isDeletingSessions ? 'Deleting...' : selectedSessionDates.length > 0 ? 'Delete now' : isSelectingSessionDates ? 'Cancel' : 'Clear'}
+            </button>
+            <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-3 py-1 rounded-lg">
+              {classDatesInMonth.length} {classDatesInMonth.length === 1 ? 'Class Session' : 'Class Sessions'} Found
+            </span>
+          </div>
         </div>
 
         {/* Class Date Chips / Buttons */}
@@ -561,36 +621,53 @@ export const AttendanceReports: React.FC = () => {
           <div className="flex flex-wrap gap-2.5">
             {classDatesInMonth.map((session) => {
               const isSelected = activeSelectedDate === session.date;
+              const isMarkedForDeletion = selectedSessionDates.includes(session.date);
               const rate = session.total > 0 ? Math.round((session.present / session.total) * 100) : 0;
 
               return (
-                <button
-                  key={session.date}
-                  onClick={() => setSelectedDate(session.date)}
-                  className={`flex flex-col text-left p-3 rounded-xl border transition-all text-xs ${
-                    isSelected
-                      ? 'bg-emerald-800 text-white border-emerald-900 shadow-sm ring-2 ring-emerald-500/30'
-                      : 'bg-slate-50 hover:bg-slate-100/80 text-slate-800 border-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className={`font-bold font-mono ${isSelected ? 'text-white' : 'text-slate-900'}`}>
-                      {formatDateLabel(session.date)}
-                    </span>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        isSelected
-                          ? 'bg-emerald-900 text-emerald-200'
-                          : rate >= 75
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-amber-100 text-amber-800'
-                      }`}
-                    >
-                      {rate}%
-                    </span>
-                  </div>
-
-                </button>
+                <div key={session.date} className="flex items-center gap-2">
+                  {isSelectingSessionDates && (
+                    <input
+                      type="checkbox"
+                      checked={isMarkedForDeletion}
+                      onChange={(event) => setSelectedSessionDates((dates) =>
+                        event.target.checked
+                          ? [...dates, session.date]
+                          : dates.filter((date) => date !== session.date)
+                      )}
+                      aria-label={`Select attendance for ${formatDateLabel(session.date)} to delete`}
+                      className="h-4 w-4 accent-rose-600"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDate(session.date)}
+                    className={`flex flex-col text-left p-3 rounded-xl border transition-all text-xs ${
+                      isMarkedForDeletion
+                        ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-200'
+                        : isSelected
+                          ? 'bg-emerald-800 text-white border-emerald-900 shadow-sm ring-2 ring-emerald-500/30'
+                          : 'bg-slate-50 hover:bg-slate-100/80 text-slate-800 border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className={`font-bold font-mono ${isSelected && !isMarkedForDeletion ? 'text-white' : 'text-slate-900'}`}>
+                        {formatDateLabel(session.date)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          isSelected && !isMarkedForDeletion
+                            ? 'bg-emerald-900 text-emerald-200'
+                            : rate >= 75
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {rate}%
+                      </span>
+                    </div>
+                  </button>
+                </div>
               );
             })}
           </div>
