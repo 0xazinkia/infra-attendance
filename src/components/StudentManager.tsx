@@ -27,8 +27,8 @@ export const StudentManager: React.FC = () => {
 
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDept, setSelectedDept] = useState<string>('all');
-  const [selectedSemester, setSelectedSemester] = useState<string>('all');
+  const [selectedDept, setSelectedDept] = useState<string>('');
+  const [selectedSemester, setSelectedSemester] = useState<string>('');
   const [selectedSection, setSelectedSection] = useState<string>('all');
 
   // Modal states
@@ -45,11 +45,13 @@ export const StudentManager: React.FC = () => {
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (selectedDept !== 'all' && !departments.includes(selectedDept)) setSelectedDept('all');
+    if (selectedDept && selectedDept !== 'all' && !departments.includes(selectedDept)) setSelectedDept('');
   }, [departments, selectedDept]);
 
   // Filtered students
   const filteredStudents = useMemo(() => {
+    if (!selectedDept && !selectedSemester) return [];
+
     return students.filter((s) => {
       const matchSearch =
         s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -57,8 +59,8 @@ export const StudentManager: React.FC = () => {
         (s.guardianPhone && s.guardianPhone.includes(searchQuery)) ||
         (s.guardianName && s.guardianName.toLowerCase().includes(searchQuery.toLowerCase()));
 
-      const matchDept = selectedDept === 'all' || s.department === selectedDept;
-      const matchSem = selectedSemester === 'all' || s.semester === selectedSemester;
+      const matchDept = !selectedDept || selectedDept === 'all' || s.department === selectedDept;
+      const matchSem = !selectedSemester || selectedSemester === 'all' || s.semester === selectedSemester;
       const matchSec = selectedSection === 'all' || s.section === selectedSection;
 
       return matchSearch && matchDept && matchSem && matchSec;
@@ -237,12 +239,13 @@ export const StudentManager: React.FC = () => {
               onChange={(e) => setSelectedDept(e.target.value)}
               className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-700 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
-              <option value="all">All Departments</option>
+              <option value="" disabled>Select Department</option>
               {departments.map((dept) => (
                 <option key={dept} value={dept}>
                   {dept}
                 </option>
               ))}
+              <option value="all">All Department</option>
             </select>
           </div>
 
@@ -253,12 +256,13 @@ export const StudentManager: React.FC = () => {
               onChange={(e) => setSelectedSemester(e.target.value)}
               className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-700 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
-              <option value="all">All Semesters</option>
+              <option value="" disabled>Select Semester</option>
               {SEMESTERS.map((sem) => (
                 <option key={sem} value={sem}>
                   {sem}
                 </option>
               ))}
+              <option value="all">All Semester</option>
             </select>
           </div>
 
@@ -269,12 +273,12 @@ export const StudentManager: React.FC = () => {
               onChange={(e) => setSelectedSection(e.target.value)}
               className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-700 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
-              <option value="all">All Sections</option>
               {SECTIONS.map((sec) => (
                 <option key={sec} value={sec}>
                   Section {sec}
                 </option>
               ))}
+              <option value="all">All Sections</option>
             </select>
           </div>
         </div>
@@ -466,7 +470,7 @@ export const StudentManager: React.FC = () => {
         isOpen={isModalOpen}
         studentToEdit={studentToEdit}
         defaultDepartment={selectedDept !== 'all' ? (selectedDept as Department) : departments[0] || ''}
-        defaultSemester={selectedSemester !== 'all' ? (selectedSemester as Semester) : SEMESTERS[0]}
+        defaultSemester={selectedSemester && selectedSemester !== 'all' ? (selectedSemester as Semester) : SEMESTERS[0]}
         defaultSection={selectedSection !== 'all' ? (selectedSection as Section) : 'A'}
         onClose={() => {
           setIsModalOpen(false);
@@ -494,7 +498,7 @@ export const StudentManager: React.FC = () => {
         isOpen={isBulkOpen}
         departments={departments}
         defaultDepartment={selectedDept !== 'all' ? (selectedDept as Department) : departments[0] || ''}
-        defaultSemester={selectedSemester !== 'all' ? (selectedSemester as Semester) : SEMESTERS[0]}
+        defaultSemester={selectedSemester && selectedSemester !== 'all' ? (selectedSemester as Semester) : SEMESTERS[0]}
         onClose={() => setIsBulkOpen(false)}
         onImport={async (newStudents) => {
           return await bulkImportStudents(newStudents);

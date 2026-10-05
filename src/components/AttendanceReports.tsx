@@ -30,7 +30,7 @@ export const AttendanceReports: React.FC = () => {
 
   // Primary Filters
   const [selectedDept, setSelectedDept] = useState<string>('');
-  const [selectedSemester, setSelectedSemester] = useState<string>(SEMESTERS[0]);
+  const [selectedSemester, setSelectedSemester] = useState<string>('');
   const [selectedSection, setSelectedSection] = useState<string>(SECTIONS[0]);
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
@@ -56,7 +56,7 @@ export const AttendanceReports: React.FC = () => {
   const [callStudent, setCallStudent] = useState<Student | null>(null);
 
   useEffect(() => {
-    if (!departments.includes(selectedDept)) setSelectedDept(departments[0] || '');
+    if (selectedDept && !departments.includes(selectedDept)) setSelectedDept('');
   }, [departments, selectedDept]);
 
   const handleSaveStatus = async (record: AttendanceRecord) => {
@@ -434,12 +434,14 @@ export const AttendanceReports: React.FC = () => {
               }}
               className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
+              <option value="" disabled>
+                Select Department
+              </option>
               {departments.map((d) => (
                 <option key={d} value={d}>
                   {d}
                 </option>
               ))}
-              {departments.length === 0 && <option value="">No departments configured</option>}
             </select>
           </div>
 
@@ -456,6 +458,9 @@ export const AttendanceReports: React.FC = () => {
               }}
               className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
+              <option value="" disabled>
+                Select Semester
+              </option>
               {SEMESTERS.map((s) => (
                 <option key={s} value={s}>
                   {s}

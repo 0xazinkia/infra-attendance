@@ -47,7 +47,7 @@ import {
 
 interface AttendanceFilter {
   department: Department;
-  semester: Semester;
+  semester: Semester | '';
   section: Section;
   subject: string;
   date: string;
@@ -153,7 +153,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const todayDate = new Date().toISOString().split('T')[0];
   const [filter, setFilter] = useState<AttendanceFilter>({
     department: '',
-    semester: SEMESTERS[0],
+    semester: '',
     section: 'A',
     subject: '',
     date: todayDate,
@@ -344,7 +344,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     setFilter((current) => ({
       ...current,
-      department: departments.includes(current.department) ? current.department : departments[0] || '',
+      department: departments.includes(current.department) ? current.department : '',
     }));
   }, [departments]);
 

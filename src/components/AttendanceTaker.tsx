@@ -136,6 +136,8 @@ export const AttendanceTaker: React.FC = () => {
   // Submit attendance to Firebase
   const handleSaveAttendance = async () => {
     if (enrolledStudents.length === 0) return;
+    if (!filter.department || !filter.semester) return;
+    const { department, semester } = filter;
     if (!filter.subject) {
       window.alert('Add a subject in Subject Management before taking attendance.');
       return;
@@ -150,8 +152,8 @@ export const AttendanceTaker: React.FC = () => {
           id: `att_${student.id}_${filter.date}_${Date.now()}`,
           date: filter.date,
           timeSlot: filter.timeSlot,
-          department: filter.department,
-          semester: filter.semester,
+          department,
+          semester,
           subject: filter.subject,
           section: filter.section,
           studentId: student.id,
@@ -221,12 +223,14 @@ export const AttendanceTaker: React.FC = () => {
               onChange={(e) => setFilter((prev) => ({ ...prev, department: e.target.value as Department }))}
               className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
+              <option value="" disabled>
+                Select Department
+              </option>
               {departments.map((dept) => (
                 <option key={dept} value={dept}>
                   {dept}
                 </option>
               ))}
-              {departments.length === 0 && <option value="">No departments configured</option>}
             </select>
           </div>
 
@@ -235,9 +239,12 @@ export const AttendanceTaker: React.FC = () => {
             <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Semester</label>
             <select
               value={filter.semester}
-              onChange={(e) => setFilter((prev) => ({ ...prev, semester: e.target.value as Semester }))}
+              onChange={(e) => setFilter((prev) => ({ ...prev, semester: e.target.value as Semester | '' }))}
               className="w-full text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             >
+              <option value="" disabled>
+                Select Semester
+              </option>
               {SEMESTERS.map((sem) => (
                 <option key={sem} value={sem}>
                   {sem}
@@ -383,7 +390,7 @@ export const AttendanceTaker: React.FC = () => {
             {/* Save to Firebase Button */}
             <button
               onClick={handleSaveAttendance}
-              disabled={isSaving || enrolledStudents.length === 0 || !filter.subject}
+              disabled={isSaving || enrolledStudents.length === 0 || !filter.department || !filter.semester || !filter.subject}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 shadow-md transition disabled:opacity-50 ml-auto"
             >
               <Save className="w-4 h-4 text-emerald-400" />
