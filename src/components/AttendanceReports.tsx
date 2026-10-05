@@ -239,7 +239,6 @@ export const AttendanceReports: React.FC = () => {
         roll: student.roll,
         studentName: student.name,
         status: 'absent',
-        guardianPhone: student.guardianPhone,
         recordedAt: student.createdAt,
       }));
 
@@ -875,7 +874,7 @@ export const AttendanceReports: React.FC = () => {
                                 </button>
                               ) : (
                                 <a
-                                  href={`tel:${record.guardianPhone}`}
+                                  href={`tel:${record.guardianPhone || ''}`}
                                   className="p-1.5 rounded-lg bg-slate-100 hover:bg-emerald-100 text-slate-700 transition inline-flex items-center"
                                 >
                                   <Phone className="w-3.5 h-3.5" />

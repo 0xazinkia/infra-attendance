@@ -31,12 +31,17 @@ import {
 } from '../services/sheetsService';
 import {
   fetchAdminEmails,
+  fetchAttendanceRecords,
   fetchCollection,
+  getAttendanceSessionId,
   removeDocument,
   removeDocuments,
   saveAdminEmails,
+  saveAttendanceRecords,
+  saveAttendanceSessionMetadata,
   saveDocument,
   saveDocuments,
+  deleteAttendanceSessionDocuments,
   waitForPendingWrites,
 } from '../services/firestoreService';
 
@@ -109,6 +114,32 @@ const isLegacyMockStudent = (student: Pick<Student, 'id' | 'name'>) =>
 
 const isLegacyMockAttendance = (record: Pick<AttendanceRecord, 'studentId' | 'studentName'>) =>
   record.studentId.startsWith('std_cst_') || record.studentName.trim().toLowerCase() === 'tanvir ahmed shanto';
+
+const normalizeAttendanceRecord = (record: AttendanceRecord): AttendanceRecord => {
+  const sessionId = record.sessionId || getAttendanceSessionId(record);
+  const studentId = record.studentId || (record.roll ? `roll_${record.roll}` : `legacy_${record.id}`);
+  return {
+    ...record,
+    studentId,
+    id: `${sessionId}_${encodeURIComponent(studentId)}`,
+    sessionId,
+  };
+};
+
+const attendanceIdentity = (record: AttendanceRecord) =>
+  `${record.sessionId || getAttendanceSessionId(record)}|${record.studentId || record.roll || record.id}`;
+
+const mergeAttendanceRecords = (existing: AttendanceRecord[], incoming: AttendanceRecord[]) => {
+  const merged = new Map(existing.map((record) => {
+    const normalized = normalizeAttendanceRecord(record);
+    return [attendanceIdentity(normalized), normalized];
+  }));
+  incoming.forEach((record) => {
+    const normalized = normalizeAttendanceRecord(record);
+    merged.set(attendanceIdentity(normalized), normalized);
+  });
+  return Array.from(merged.values());
+};
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [students, setStudents] = useState<Student[]>([]);
@@ -219,7 +250,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const [adminEmails, loadedStudents, loadedAttendance, loadedCalls, loadedSubjects, loadedDepartments] = await Promise.all([
         fetchAdminEmails(),
         fetchCollection<Student>('students'),
-        fetchCollection<AttendanceRecord>('attendance'),
+        fetchAttendanceRecords(),
         fetchCollection<GuardianCallLog>('guardianCallLogs'),
         fetchCollection<SubjectItem>('subjects'),
         fetchCollection<{ id: string; name: string }>('departments'),
@@ -230,17 +261,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setAuthorizedAdmins(normalizedAdmins.length ? normalizedAdmins : DEFAULT_ADMIN_EMAILS);
       const cleanStudents = loadedStudents.filter((student) => !isLegacyMockStudent(student));
-      const cleanAttendance = loadedAttendance.filter((record) => !isLegacyMockAttendance(record));
       const cleanCalls = loadedCalls.filter((log) => !isLegacyMockAttendance(log));
-      if (navigator.onLine) {
-        await Promise.all([
-          ...loadedStudents.filter(isLegacyMockStudent).map((student) => removeDocument('students', student.id)),
-          ...loadedAttendance.filter(isLegacyMockAttendance).map((record) => removeDocument('attendance', record.id)),
-          ...loadedCalls.filter(isLegacyMockAttendance).map((log) => removeDocument('guardianCallLogs', log.id)),
-        ]);
+      const legacyStudentIds = loadedStudents.filter(isLegacyMockStudent).map((student) => student.id);
+      const legacyCallIds = loadedCalls.filter(isLegacyMockAttendance).map((log) => log.id);
+      if (navigator.onLine && (legacyStudentIds.length || legacyCallIds.length)) {
+        enqueueWrite(Promise.all([
+          ...legacyStudentIds.map((id) => removeDocument('students', id)),
+          ...legacyCallIds.map((id) => removeDocument('guardianCallLogs', id)),
+        ]).then(() => undefined));
       }
       setStudents(cleanStudents);
-      setAttendanceRecords(cleanAttendance);
+      setAttendanceRecords(loadedAttendance);
       setCallLogs(cleanCalls);
       const cleanSubjects = loadedSubjects.filter((subject) =>
         subject.id !== 'bteb_cst_401' && subject.code !== '66641' && subject.name !== 'Object Oriented Programming (Java/Python)'
@@ -395,12 +426,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const cleanAttendance = importedAttendance.filter((record) => !isLegacyMockAttendance(record));
       const cleanCallLogs = importedCallLogs.filter((log) => !isLegacyMockAttendance(log));
       const mergedStudents = mergeById(students, cleanStudents);
-      const mergedAttendance = mergeById(attendanceRecords, cleanAttendance);
+      const mergedAttendance = mergeAttendanceRecords(attendanceRecords, cleanAttendance);
       const mergedSubjects = mergeById(subjects, importedSubjects);
       const mergedCallLogs = mergeById(callLogs, cleanCallLogs);
       const writes = [
         saveDocuments('students', mergedStudents),
-        saveDocuments('attendance', mergedAttendance),
+        saveAttendanceRecords(mergedAttendance),
         saveDocuments('subjects', mergedSubjects),
         saveDocuments('guardianCallLogs', mergedCallLogs),
       ];
@@ -433,26 +464,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
     const localStudents = mergeById(students, readLocal<Student>('infra_polytechnic_students_v1').filter((student) => !isLegacyMockStudent(student)));
-    const localAttendance = mergeById(attendanceRecords, readLocal<AttendanceRecord>('infra_polytechnic_attendance_v1').filter((record) => !isLegacyMockAttendance(record)));
     const localCallLogs = mergeById(callLogs, readLocal<GuardianCallLog>('infra_polytechnic_call_logs_v1').filter((log) => !isLegacyMockAttendance(log)));
     const localSubjects = mergeById(subjects, readLocal<SubjectItem>('infra_polytechnic_subjects_v1'));
     const writes = [
       saveDocuments('students', localStudents),
-      saveDocuments('attendance', localAttendance),
       saveDocuments('guardianCallLogs', localCallLogs),
       saveDocuments('subjects', localSubjects),
     ];
     if (!navigator.onLine) {
       writes.forEach(enqueueWrite);
       setStudents(localStudents);
-      setAttendanceRecords(localAttendance);
       setCallLogs(localCallLogs);
       setSubjects(localSubjects);
       return;
     }
     await Promise.all(writes);
     localStorage.removeItem('infra_polytechnic_students_v1');
-    localStorage.removeItem('infra_polytechnic_attendance_v1');
     localStorage.removeItem('infra_polytechnic_call_logs_v1');
     localStorage.removeItem('infra_polytechnic_subjects_v1');
     await loadDatabase(user!);
@@ -530,27 +557,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return formatted.length;
   };
 
-  // Save attendance records and public summaries to Firestore.
   const saveAttendanceBatch = async (records: AttendanceRecord[]): Promise<void> => {
     requireDatabaseAccess();
-    // Merge or replace records for the same student on the same date + subject
-    const existingFiltered = attendanceRecords.filter((r) => {
-      const match = records.some(
-        (newR) =>
-          newR.studentId === r.studentId &&
-          newR.date === r.date &&
-          newR.subject === r.subject
-      );
-      return !match;
-    });
-
-    const replacedRecords = attendanceRecords.filter((existing) => records.some((record) =>
-      record.studentId === existing.studentId && record.date === existing.date && record.subject === existing.subject
-    ));
-    enqueueWrite(removeDocuments('attendance', replacedRecords.map((record) => record.id)));
-    enqueueWrite(saveDocuments('attendance', records));
-    const updatedRecords = [...records, ...existingFiltered];
-    setAttendanceRecords(updatedRecords);
+    const normalizedRecords = records.map(normalizeAttendanceRecord);
+    enqueueWrite(saveAttendanceRecords(normalizedRecords));
+    setAttendanceRecords((current) => mergeAttendanceRecords(current, normalizedRecords));
   };
 
   const clearAttendanceRange = async (startMonth: string, endMonth: string, department: Department | 'all' = 'all'): Promise<number> => {
@@ -567,7 +578,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (matching.length === 0) return 0;
 
-    enqueueWrite(removeDocuments('attendance', matching.map((record) => record.id)));
+    const sessionIds = Array.from(new Set(matching.map((record) => record.sessionId || getAttendanceSessionId(record))));
+    enqueueWrite(deleteAttendanceSessionDocuments(sessionIds, matching));
     const remaining = attendanceRecords.filter((record) => {
       const recordMonth = record.date.substring(0, 7);
       const matchesMonth = recordMonth >= fromMonth && recordMonth <= toMonth;
@@ -598,9 +610,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (matching.length === 0) return 0;
 
-    const matchingIds = new Set(matching.map((record) => record.id));
-    enqueueWrite(removeDocuments('attendance', Array.from(matchingIds)));
-    setAttendanceRecords(attendanceRecords.filter((record) => !matchingIds.has(record.id)));
+    const sessionIds = Array.from(new Set(matching.map((record) => record.sessionId || getAttendanceSessionId(record))));
+    enqueueWrite(deleteAttendanceSessionDocuments(sessionIds, matching));
+    setAttendanceRecords(attendanceRecords.filter((record) => !sessionIds.includes(record.sessionId || getAttendanceSessionId(record))));
     return matching.length;
   };
 
@@ -651,7 +663,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const writes = [
       saveDocument('departments', updatedDocument),
       saveDocuments('students', updatedStudents.filter((student, index) => students[index].department === currentName)),
-      saveDocuments('attendance', updatedAttendance.filter((record, index) => attendanceRecords[index].department === currentName)),
+      saveAttendanceSessionMetadata(updatedAttendance.filter((record, index) => attendanceRecords[index].department === currentName)),
       saveDocuments('subjects', updatedSubjects.filter((subject, index) => subjects[index].department === currentName)),
     ];
     writes.forEach(enqueueWrite);

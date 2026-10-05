@@ -33,6 +33,7 @@ export interface Student {
 
 export interface AttendanceRecord {
   id: string;
+  sessionId?: string;
   date: string; // YYYY-MM-DD
   timeSlot?: string;
   department: Department;
@@ -43,10 +44,20 @@ export interface AttendanceRecord {
   roll: string;
   studentName: string;
   status: AttendanceStatus;
-  guardianPhone: string;
+  guardianPhone?: string;
   remarks?: string;
   recordedBy?: string;
   recordedAt: string;
+}
+
+export interface AttendanceSession {
+  id: string;
+  date: string;
+  timeSlot?: string;
+  department: Department;
+  semester: Semester;
+  subject: string;
+  section: Section;
 }
 
 export interface SubjectItem {

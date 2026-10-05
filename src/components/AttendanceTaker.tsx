@@ -158,7 +158,6 @@ export const AttendanceTaker: React.FC = () => {
           roll: student.roll,
           studentName: student.name,
           status: entry.status === 'present' ? 'present' : 'absent',
-          guardianPhone: student.guardianPhone,
           remarks: entry.remarks,
           recordedBy: user?.displayName || 'Faculty Member',
           recordedAt: timestamp,

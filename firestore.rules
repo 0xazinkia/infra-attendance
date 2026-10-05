@@ -20,7 +20,10 @@ service cloud.firestore {
     match /students/{document} {
       allow read, write: if isAdmin();
     }
-    match /attendance/{document} {
+    match /attendanceSessions/{sessionId} {
+      allow read, write: if isAdmin();
+    }
+    match /{path=**}/records/{recordId} {
       allow read, write: if isAdmin();
     }
     match /guardianCallLogs/{document} {
