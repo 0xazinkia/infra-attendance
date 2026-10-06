@@ -15,17 +15,38 @@ import {
 import { Student } from '../types';
 import { useApp } from '../context/AppContext';
 
+export interface MonthlyAttendanceSummary {
+  month: string;
+  classesHeld: number;
+  present: number;
+  absent: number;
+  absentDates: string[];
+  attendanceRate: number | null;
+}
+
 interface GuardianCallModalProps {
   student: Student;
   currentSubject?: string;
   attendanceDate?: string;
+  monthlyAttendance?: MonthlyAttendanceSummary;
   onClose: () => void;
 }
+
+const formatBanglaCount = (value: number) =>
+  new Intl.NumberFormat('bn-BD', { minimumIntegerDigits: 2, useGrouping: false }).format(value);
+
+const formatBanglaDate = (value: string) =>
+  new Date(`${value}T00:00:00`).toLocaleDateString('bn-BD', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
 
 export const GuardianCallModal: React.FC<GuardianCallModalProps> = ({
   student,
   currentSubject = 'General Class',
   attendanceDate = new Date().toISOString().split('T')[0],
+  monthlyAttendance,
   onClose,
 }) => {
   const { addCallLog } = useApp();
@@ -45,7 +66,38 @@ export const GuardianCallModal: React.FC<GuardianCallModalProps> = ({
     : `880${rawGuardianPhone}`;
 
   // Pre-configured SMS / WhatsApp templates
-  const banglaTemplate = `সম্মানিত অভিভাবক, আপনার সন্তান ${student.name} (রোল: ${student.roll}, ডিপার্টমেন্ট: ${student.department}) আজ ${attendanceDate} তারিখে ইনফ্রা পলিটেকনিক ইনস্টিটিউট-এ "${currentSubject}" ক্লাসে অনুপস্থিত রয়েছে। অনুগ্রহ করে অনুপস্থিতির কারণ জানান বা অফিসে যোগাযোগ করুন। ধন্যবাদ, ইনফ্রা পলিটেকনিক প্রশাসন।`;
+  const monthLabel = monthlyAttendance
+    ? new Date(`${monthlyAttendance.month}-01T00:00:00`).toLocaleDateString('bn-BD', {
+        month: 'long',
+        year: 'numeric',
+      })
+    : '';
+  const absentDateList = monthlyAttendance?.absentDates.length
+    ? monthlyAttendance.absentDates.map(formatBanglaDate).join(', ')
+    : 'কোনো অনুপস্থিতির তারিখ নেই';
+  const monthlyBanglaTemplate = monthlyAttendance
+    ? `সম্মানিত অভিভাবক,
+
+আপনার সন্তান ${student.name}
+রোল: ${student.roll}
+ডিপার্টমেন্ট: ${student.department}
+
+“${currentSubject}” বিষয়ে চলতি ${monthLabel} মাসে এখন পর্যন্ত অনুষ্ঠিত মোট ${formatBanglaCount(monthlyAttendance.classesHeld)}টি ক্লাসের মধ্যে ${formatBanglaCount(monthlyAttendance.absent)}টিতেই অনুপস্থিত রয়েছে।
+
+উপস্থিতির বিবরণ:
+
+• চলতি মাসে মোট ক্লাস অনুষ্ঠিত: ${formatBanglaCount(monthlyAttendance.classesHeld)}টি
+• মোট অনুপস্থিত: ${formatBanglaCount(monthlyAttendance.absent)}টি
+• অনুপস্থিতির তারিখ: ${absentDateList}
+• ${monthLabel} মাসের গড় উপস্থিতি: ${monthlyAttendance.attendanceRate === null ? 'তথ্য নেই' : `${new Intl.NumberFormat('bn-BD').format(monthlyAttendance.attendanceRate)}%`}${monthlyAttendance.present === 0 && monthlyAttendance.classesHeld > 0 ? '\n• অর্থাৎ, চলতি মাসে এখন পর্যন্ত কোনো ক্লাসেই উপস্থিত ছিল না।' : ''}
+
+আপনার সন্তানের নিয়মিত ক্লাসে উপস্থিতি নিশ্চিত করতে অনুগ্রহ করে বিষয়টি গুরুত্বসহকারে দেখুন। অনুপস্থিতির কারণ জানাতে অথবা বিস্তারিত তথ্যের জন্য ইনস্টিটিউট অফিসে যোগাযোগ করুন।
+
+ধন্যবাদান্তে,
+ইনফ্রা পলিটেকনিক ইনস্টিটিউট প্রশাসন`
+    : null;
+  const banglaTemplate = monthlyBanglaTemplate ||
+    `সম্মানিত অভিভাবক, আপনার সন্তান ${student.name} (রোল: ${student.roll}, ডিপার্টমেন্ট: ${student.department}) আজ ${attendanceDate} তারিখে ইনফ্রা পলিটেকনিক ইনস্টিটিউট-এ "${currentSubject}" ক্লাসে অনুপস্থিত রয়েছে। অনুগ্রহ করে অনুপস্থিতির কারণ জানান বা অফিসে যোগাযোগ করুন। ধন্যবাদ, ইনফ্রা পলিটেকনিক প্রশাসন।`;
 
   const englishTemplate = `Dear Guardian, your ward ${student.name} (Roll: ${student.roll}, Dept: ${student.department}) was marked ABSENT today (${attendanceDate}) in "${currentSubject}" class at Infra Polytechnic Institute. Please ensure regular attendance. - IPI Administration`;
 
@@ -190,7 +242,7 @@ export const GuardianCallModal: React.FC<GuardianCallModalProps> = ({
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                 <MessageSquare className="w-3.5 h-3.5 text-teal-600" />
-                <span>Instant Absentee SMS / Notice Templates</span>
+                <span>{monthlyAttendance ? 'Monthly Attendance Notice' : 'Instant Absentee SMS / Notice Templates'}</span>
               </label>
               <span className="text-[11px] text-slate-500">Click to copy & paste into SMS/WhatsApp</span>
             </div>
@@ -200,7 +252,7 @@ export const GuardianCallModal: React.FC<GuardianCallModalProps> = ({
               <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100/70 transition">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-semibold text-slate-700 flex items-center gap-1">
-                    🇧🇩 বাংলা নোটিশ (অনুপস্থিতি বার্তা)
+                    {monthlyAttendance ? '🇧🇩 বাংলা মাসিক উপস্থিতির নোটিশ' : '🇧🇩 বাংলা নোটিশ (অনুপস্থিতি বার্তা)'}
                   </span>
                   <button
                     onClick={() => copyToClipboard(banglaTemplate, 'bn')}
@@ -219,11 +271,11 @@ export const GuardianCallModal: React.FC<GuardianCallModalProps> = ({
                     )}
                   </button>
                 </div>
-                <p className="text-xs text-slate-600 leading-relaxed font-sans">{banglaTemplate}</p>
+                <p className="whitespace-pre-wrap text-xs text-slate-600 leading-relaxed font-sans">{banglaTemplate}</p>
               </div>
 
               {/* English template */}
-              <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100/70 transition">
+              {!monthlyAttendance && <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100/70 transition">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-semibold text-slate-700 flex items-center gap-1">
                     🇬🇧 English Notice (Absentee Warning)
@@ -246,7 +298,7 @@ export const GuardianCallModal: React.FC<GuardianCallModalProps> = ({
                   </button>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed font-sans">{englishTemplate}</p>
-              </div>
+              </div>}
             </div>
           </div>
 

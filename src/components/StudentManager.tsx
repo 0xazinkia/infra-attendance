@@ -7,7 +7,6 @@ import {
   Trash2, 
   Phone, 
   ShieldAlert, 
-  Download, 
   UploadCloud, 
   Filter, 
   PhoneCall,
@@ -20,10 +19,26 @@ import { SEMESTERS, SECTIONS } from '../data/mockData';
 import { StudentModal } from './StudentModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { BulkImportModal } from './BulkImportModal';
+import {
+  BulkNumberImportModal,
+  StudentContactImportFailure,
+  StudentContactImportRow,
+  StudentContactImportResult,
+  StudentContactImportScope,
+} from './BulkNumberImportModal';
 import { GuardianCallModal } from './GuardianCallModal';
 
 export const StudentManager: React.FC = () => {
-  const { students, departments, addStudent, updateStudent, deleteStudent, deleteStudents, bulkImportStudents } = useApp();
+  const {
+    students,
+    departments,
+    addStudent,
+    updateStudent,
+    deleteStudent,
+    deleteStudents,
+    bulkImportStudents,
+    bulkUpdateStudents,
+  } = useApp();
 
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,6 +54,7 @@ export const StudentManager: React.FC = () => {
   const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
 
   const [isBulkOpen, setIsBulkOpen] = useState(false);
+  const [isBulkNumberOpen, setIsBulkNumberOpen] = useState(false);
   const [callModalStudent, setCallModalStudent] = useState<Student | null>(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -50,7 +66,7 @@ export const StudentManager: React.FC = () => {
 
   // Filtered students
   const filteredStudents = useMemo(() => {
-    if (!selectedDept && !selectedSemester) return [];
+    if (!selectedDept || !selectedSemester) return [];
 
     return students.filter((s) => {
       const matchSearch =
@@ -132,41 +148,97 @@ export const StudentManager: React.FC = () => {
     }
   };
 
-  const exportToCSV = () => {
-    if (filteredStudents.length === 0) return;
-    const headers = [
-      'Roll',
-      'Name',
-      'Department',
-      'Semester',
-      'Section',
-      'Student Phone',
-      'Guardian Name',
-      'Guardian Phone',
-      'Relation',
-      'Remarks',
-    ];
-    const rows = filteredStudents.map((s) => [
-      `"${s.roll}"`,
-      `"${s.name}"`,
-      `"${s.department}"`,
-      `"${s.semester}"`,
-      `"${s.section}"`,
-      `"${s.studentPhone || ''}"`,
-      `"${s.guardianName || ''}"`,
-      `"${s.guardianPhone || ''}"`,
-      `"${s.guardianRelation || ''}"`,
-      `"${s.remarks || ''}"`,
-    ]);
+  const handleBulkNumberImport = async (
+    rows: StudentContactImportRow[],
+    csvFailures: StudentContactImportFailure[],
+    scope: StudentContactImportScope
+  ): Promise<StudentContactImportResult> => {
+    const failures = [...csvFailures];
+    const rollCounts = new Map<string, number>();
+    rows.forEach(({ roll }) => {
+      const normalizedRoll = roll.trim().toLowerCase();
+      if (normalizedRoll) rollCounts.set(normalizedRoll, (rollCounts.get(normalizedRoll) || 0) + 1);
+    });
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Infra_Polytechnic_Students_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const studentsByRoll = new Map<string, Student[]>();
+    students
+      .filter((student) =>
+        student.department === scope.department &&
+        student.semester === scope.semester &&
+        student.section === scope.section
+      )
+      .forEach((student) => {
+        const normalizedRoll = student.roll.trim().toLowerCase();
+        const matches = studentsByRoll.get(normalizedRoll) || [];
+        matches.push(student);
+        studentsByRoll.set(normalizedRoll, matches);
+      });
+
+    const validRelations: Student['guardianRelation'][] = [
+      'Father',
+      'Mother',
+      'Brother',
+      'Sister',
+      'Uncle',
+      'Guardian',
+    ];
+    const updates: Student[] = [];
+
+    rows.forEach((row) => {
+      const roll = row.roll.trim();
+      const normalizedRoll = roll.toLowerCase();
+      const fail = (reason: string) => failures.push({ roll, rowNumber: row.rowNumber, reason });
+
+      if (!roll) {
+        fail('Roll is required.');
+        return;
+      }
+      if ((rollCounts.get(normalizedRoll) || 0) > 1) {
+        fail('This roll appears more than once in the CSV; all duplicate rows were skipped.');
+        return;
+      }
+      const matchingStudents = studentsByRoll.get(normalizedRoll) || [];
+      if (matchingStudents.length === 0) {
+        fail(`No existing student with this roll was found in ${scope.department}, ${scope.semester}, Section ${scope.section}.`);
+        return;
+      }
+      if (matchingStudents.length > 1) {
+        fail('More than one existing student has this roll, so the record is ambiguous.');
+        return;
+      }
+
+      const hasContactDetails = Boolean(
+        row.studentPhone.trim() ||
+        row.guardianName.trim() ||
+        row.guardianPhone.trim() ||
+        row.guardianRelation.trim()
+      );
+      if (!hasContactDetails) {
+        fail('No contact details were provided for this roll.');
+        return;
+      }
+
+      const existing = matchingStudents[0];
+      const relation = row.guardianRelation.trim();
+      const matchedRelation = validRelations.find(
+        (valid) => valid.toLowerCase() === relation.toLowerCase()
+      );
+      if (relation && !matchedRelation) {
+        fail(`Unsupported relation "${relation}". Use Father, Mother, Brother, Sister, Uncle, or Guardian.`);
+        return;
+      }
+
+      updates.push({
+        ...existing,
+        studentPhone: row.studentPhone.trim() || existing.studentPhone,
+        guardianName: row.guardianName.trim() || existing.guardianName,
+        guardianPhone: row.guardianPhone.trim() || existing.guardianPhone,
+        guardianRelation: matchedRelation || existing.guardianRelation,
+      });
+    });
+
+    await bulkUpdateStudents(updates);
+    return { savedCount: updates.length, failures };
   };
 
   return (
@@ -202,11 +274,11 @@ export const StudentManager: React.FC = () => {
               <span>Bulk CSV Import</span>
             </button>
             <button
-              onClick={exportToCSV}
+              onClick={() => setIsBulkNumberOpen(true)}
               className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition"
             >
-              <Download className="w-4 h-4 text-slate-500" />
-              <span>Export CSV</span>
+              <Phone className="w-4 h-4 text-slate-500" />
+              <span>Bulk Number Import</span>
             </button>
             <button
               onClick={handleOpenAdd}
@@ -289,7 +361,9 @@ export const StudentManager: React.FC = () => {
         <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-800">
-              Showing {filteredStudents.length} of {students.length} Total Students
+              {selectedDept && selectedSemester
+                ? `Showing ${filteredStudents.length} of ${students.length} Total Students`
+                : 'Select department and semester to view students'}
             </span>
           </div>
           <span className="text-slate-500 text-[11px]">
@@ -299,18 +373,24 @@ export const StudentManager: React.FC = () => {
 
         {filteredStudents.length === 0 ? (
           <div className="p-12 text-center">
-            <p className="text-xs text-slate-500">No students found matching current filters.</p>
-            <button
-              onClick={() => {
-                setSearchQuery('');
-                setSelectedDept('all');
-                setSelectedSemester('all');
-                setSelectedSection('all');
-              }}
-              className="mt-3 text-xs font-semibold text-emerald-600 hover:underline"
-            >
-              Clear all filters
-            </button>
+            {!selectedDept || !selectedSemester ? (
+              <p className="text-xs text-slate-500">Select both a department and semester to show the student list.</p>
+            ) : (
+              <>
+                <p className="text-xs text-slate-500">No students found matching current filters.</p>
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedDept('all');
+                    setSelectedSemester('all');
+                    setSelectedSection('all');
+                  }}
+                  className="mt-3 text-xs font-semibold text-emerald-600 hover:underline"
+                >
+                  Clear all filters
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -469,7 +549,7 @@ export const StudentManager: React.FC = () => {
       <StudentModal
         isOpen={isModalOpen}
         studentToEdit={studentToEdit}
-        defaultDepartment={selectedDept !== 'all' ? (selectedDept as Department) : departments[0] || ''}
+        defaultDepartment={selectedDept && selectedDept !== 'all' ? selectedDept : departments[0] || ''}
         defaultSemester={selectedSemester && selectedSemester !== 'all' ? (selectedSemester as Semester) : SEMESTERS[0]}
         defaultSection={selectedSection !== 'all' ? (selectedSection as Section) : 'A'}
         onClose={() => {
@@ -497,12 +577,22 @@ export const StudentManager: React.FC = () => {
       <BulkImportModal
         isOpen={isBulkOpen}
         departments={departments}
-        defaultDepartment={selectedDept !== 'all' ? (selectedDept as Department) : departments[0] || ''}
+        defaultDepartment={selectedDept && selectedDept !== 'all' ? selectedDept : departments[0] || ''}
         defaultSemester={selectedSemester && selectedSemester !== 'all' ? (selectedSemester as Semester) : SEMESTERS[0]}
         onClose={() => setIsBulkOpen(false)}
         onImport={async (newStudents) => {
           return await bulkImportStudents(newStudents);
         }}
+      />
+
+      <BulkNumberImportModal
+        isOpen={isBulkNumberOpen}
+        onClose={() => setIsBulkNumberOpen(false)}
+        departments={departments}
+        defaultDepartment={selectedDept && selectedDept !== 'all' ? selectedDept : departments[0] || ''}
+        defaultSemester={selectedSemester && selectedSemester !== 'all' ? selectedSemester as Semester : SEMESTERS[0]}
+        defaultSection={selectedSection !== 'all' ? selectedSection as Section : SECTIONS[0]}
+        onImport={handleBulkNumberImport}
       />
 
       {/* Guardian Call / SMS Dialog */}

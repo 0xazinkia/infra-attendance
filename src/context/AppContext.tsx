@@ -72,6 +72,7 @@ interface AppContextType {
   deleteStudent: (studentId: string) => Promise<void>;
   deleteStudents: (studentIds: string[]) => Promise<void>;
   bulkImportStudents: (newStudents: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>[]) => Promise<number>;
+  bulkUpdateStudents: (updatedStudents: Student[]) => Promise<void>;
   
   // Attendance & Calling
   saveAttendanceBatch: (records: AttendanceRecord[]) => Promise<void>;
@@ -557,6 +558,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return formatted.length;
   };
 
+  const bulkUpdateStudents = async (updatedStudents: Student[]): Promise<void> => {
+    if (updatedStudents.length === 0) return;
+    requireDatabaseAccess();
+
+    const now = new Date().toISOString();
+    const updated = updatedStudents.map((student) => ({ ...student, updatedAt: now }));
+    await saveDocuments('students', updated);
+    const updatesById = new Map(updated.map((student) => [student.id, student]));
+    setStudents((current) => current.map((student) => updatesById.get(student.id) || student));
+  };
+
   const saveAttendanceBatch = async (records: AttendanceRecord[]): Promise<void> => {
     requireDatabaseAccess();
     const normalizedRecords = records.map(normalizeAttendanceRecord);
@@ -769,6 +781,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteStudent,
         deleteStudents,
         bulkImportStudents,
+        bulkUpdateStudents,
         saveAttendanceBatch,
         clearAttendanceRange,
         deleteAttendanceSessions,

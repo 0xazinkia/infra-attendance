@@ -156,13 +156,17 @@ export const StudentModal: React.FC<StudentModalProps> = ({
                   onChange={(e) => setDepartment(e.target.value as Department)}
                   className="w-full text-xs bg-slate-50 border border-slate-300 rounded-lg p-2.5 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                 >
+                  {!department && (
+                    <option value="" disabled>
+                      {departments.length > 0 ? 'Select a department' : 'No departments configured'}
+                    </option>
+                  )}
                   {departments.map((dept) => (
                     <option key={dept} value={dept}>
                       {dept}
                     </option>
                   ))}
                   {department && !departments.includes(department) && <option value={department}>{department} (archived)</option>}
-                  {departments.length === 0 && <option value="">No departments configured</option>}
                 </select>
                 {errors.department && <span className="text-[11px] text-rose-600 mt-0.5 block">{errors.department}</span>}
               </div>

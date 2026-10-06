@@ -23,7 +23,7 @@ import {
 import { useApp } from '../context/AppContext';
 import { SEMESTERS, SECTIONS } from '../data/mockData';
 import { Department, Semester, Section, Student, AttendanceRecord } from '../types';
-import { GuardianCallModal } from './GuardianCallModal';
+import { GuardianCallModal, MonthlyAttendanceSummary } from './GuardianCallModal';
 
 export const AttendanceReports: React.FC = () => {
   const { students, attendanceRecords, subjects, departments, saveAttendanceBatch, deleteAttendanceSessions } = useApp();
@@ -54,6 +54,8 @@ export const AttendanceReports: React.FC = () => {
 
   // Guardian call modal
   const [callStudent, setCallStudent] = useState<Student | null>(null);
+  const [monthlyCallSummary, setMonthlyCallSummary] = useState<MonthlyAttendanceSummary | null>(null);
+  const [callAttendanceDate, setCallAttendanceDate] = useState<string | undefined>();
 
   useEffect(() => {
     if (selectedDept && !departments.includes(selectedDept)) setSelectedDept('');
@@ -864,7 +866,11 @@ export const AttendanceReports: React.FC = () => {
                               </button>
                               {matchedStudent ? (
                                 <button
-                                  onClick={() => setCallStudent(matchedStudent)}
+                                  onClick={() => {
+                                    setMonthlyCallSummary(null);
+                                    setCallAttendanceDate(record.date);
+                                    setCallStudent(matchedStudent);
+                                  }}
                                   title={`Call ${matchedStudent.guardianName} (${matchedStudent.guardianPhone})`}
                                   className={`p-1.5 rounded-lg transition inline-flex items-center gap-1 text-xs font-semibold ${
                                     !isPresent
@@ -974,7 +980,18 @@ export const AttendanceReports: React.FC = () => {
                           <td className="sticky right-0 z-10 border-b border-slate-100 bg-white px-2 py-2 text-center">
                             <button
                               type="button"
-                              onClick={() => setCallStudent(student)}
+                              onClick={() => {
+                                setMonthlyCallSummary({
+                                  month: selectedMonth,
+                                  classesHeld: monthlyClassCount,
+                                  present,
+                                  absent,
+                                  absentDates,
+                                  attendanceRate: percentage,
+                                });
+                                setCallAttendanceDate(undefined);
+                                setCallStudent(student);
+                              }}
                               title={`Contact guardian ${student.guardianName} at ${student.guardianPhone}`}
                               className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 font-semibold text-emerald-800 hover:bg-emerald-100"
                             >
@@ -1073,7 +1090,11 @@ export const AttendanceReports: React.FC = () => {
                       <td className="px-3 py-2 text-center">
                         <button
                           type="button"
-                          onClick={() => setCallStudent(student)}
+                          onClick={() => {
+                            setMonthlyCallSummary(null);
+                            setCallAttendanceDate(undefined);
+                            setCallStudent(student);
+                          }}
                           title={`Contact guardian ${student.guardianName} at ${student.guardianPhone}`}
                           className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 font-semibold text-emerald-800 hover:bg-emerald-100"
                         >
@@ -1093,7 +1114,14 @@ export const AttendanceReports: React.FC = () => {
       {callStudent && (
         <GuardianCallModal
           student={callStudent}
-          onClose={() => setCallStudent(null)}
+          currentSubject={selectedSubject}
+          attendanceDate={callAttendanceDate}
+          monthlyAttendance={monthlyCallSummary || undefined}
+          onClose={() => {
+            setCallStudent(null);
+            setMonthlyCallSummary(null);
+            setCallAttendanceDate(undefined);
+          }}
         />
       )}
     </div>
