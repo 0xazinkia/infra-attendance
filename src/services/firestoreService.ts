@@ -260,3 +260,26 @@ export async function deleteAttendanceSessionDocuments(
   await Promise.all(entryCommits);
   await removeDocuments('attendanceSessions', uniqueSessionIds);
 }
+
+export async function deleteAttendanceRecordDocuments(records: AttendanceRecord[]): Promise<void> {
+  const uniqueRecords = Array.from(new Map(records.map((record) => [
+    `${record.sessionId || getAttendanceSessionId(record)}|${record.studentId}`,
+    record,
+  ])).values());
+
+  for (let start = 0; start < uniqueRecords.length; start += 450) {
+    const batch = writeBatch(db);
+    uniqueRecords.slice(start, start + 450).forEach((record) => {
+      const sessionId = record.sessionId || getAttendanceSessionId(record);
+      const studentId = record.studentId || (record.roll ? `roll_${record.roll}` : `legacy_${record.id}`);
+      batch.delete(doc(
+        db,
+        'attendanceSessions',
+        sessionId,
+        'records',
+        encodeURIComponent(studentId)
+      ));
+    });
+    await batch.commit();
+  }
+}

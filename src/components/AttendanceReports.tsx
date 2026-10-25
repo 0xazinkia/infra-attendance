@@ -35,7 +35,15 @@ const latestAttendanceByDate = (records: AttendanceRecord[]) => {
 };
 
 export const AttendanceReports: React.FC = () => {
-  const { students, attendanceRecords, subjects, departments, saveAttendanceBatch, deleteAttendanceSessions } = useApp();
+  const {
+    students,
+    attendanceRecords,
+    subjects,
+    departments,
+    saveAttendanceBatch,
+    deleteStudentAttendance,
+    deleteAttendanceSessions,
+  } = useApp();
 
   // Primary Filters
   const [selectedDept, setSelectedDept] = useState<string>('');
@@ -60,6 +68,7 @@ export const AttendanceReports: React.FC = () => {
   const [editingStatusRecordId, setEditingStatusRecordId] = useState<string | null>(null);
   const [pendingStatus, setPendingStatus] = useState<AttendanceRecord['status']>('present');
   const [isSavingStatus, setIsSavingStatus] = useState(false);
+  const [deletingAttendanceId, setDeletingAttendanceId] = useState<string | null>(null);
 
   // Guardian call modal
   const [callStudent, setCallStudent] = useState<Student | null>(null);
@@ -79,6 +88,23 @@ export const AttendanceReports: React.FC = () => {
       window.alert(error instanceof Error ? error.message : 'Could not update attendance status.');
     } finally {
       setIsSavingStatus(false);
+    }
+  };
+
+  const handleDeleteStudentAttendance = async (record: AttendanceRecord) => {
+    const confirmed = window.confirm(
+      `Remove attendance for ${record.studentName} (Roll ${record.roll}) on ${formatDateLabel(record.date)}? This will remove this student's saved attendance entry for the selected subject.`
+    );
+    if (!confirmed) return;
+
+    setDeletingAttendanceId(record.id);
+    try {
+      await deleteStudentAttendance(record);
+      setEditingStatusRecordId(null);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Could not remove this student attendance record.');
+    } finally {
+      setDeletingAttendanceId(null);
     }
   };
 
@@ -873,6 +899,18 @@ export const AttendanceReports: React.FC = () => {
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
+                              {attendanceRecords.some((savedRecord) => savedRecord.id === record.id) && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeleteStudentAttendance(record)}
+                                  disabled={deletingAttendanceId !== null}
+                                  title={`Remove attendance for roll ${record.roll}`}
+                                  aria-label={`Remove attendance for ${record.studentName}, roll ${record.roll}`}
+                                  className="rounded-lg bg-rose-50 p-1.5 text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                               {matchedStudent ? (
                                 <button
                                   onClick={() => {

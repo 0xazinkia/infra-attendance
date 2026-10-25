@@ -42,6 +42,7 @@ import {
   saveDocument,
   saveDocuments,
   deleteAttendanceSessionDocuments,
+  deleteAttendanceRecordDocuments,
   waitForPendingWrites,
 } from '../services/firestoreService';
 
@@ -75,6 +76,7 @@ interface AppContextType {
   
   // Attendance & Calling
   saveAttendanceBatch: (records: AttendanceRecord[]) => Promise<void>;
+  deleteStudentAttendance: (record: AttendanceRecord) => Promise<number>;
   clearAttendanceRange: (startMonth: string, endMonth: string, department?: Department | 'all') => Promise<number>;
   deleteAttendanceSessions: (dates: string[], department: Department, semester: Semester, section: Section, subject: string) => Promise<number>;
   addCallLog: (log: Omit<GuardianCallLog, 'id' | 'callTime'>) => Promise<void>;
@@ -574,6 +576,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAttendanceRecords((current) => mergeAttendanceRecords(current, normalizedRecords));
   };
 
+  const deleteStudentAttendance = async (record: AttendanceRecord): Promise<number> => {
+    requireDatabaseAccess();
+    const studentIdentity = record.studentId || record.roll;
+    const matchingRecords = attendanceRecords.filter((item) =>
+      item.date === record.date &&
+      item.department === record.department &&
+      item.semester === record.semester &&
+      item.section === record.section &&
+      item.subject === record.subject &&
+      (item.studentId || item.roll) === studentIdentity
+    );
+    if (matchingRecords.length === 0) return 0;
+
+    await deleteAttendanceRecordDocuments(matchingRecords);
+    const recordIds = new Set(matchingRecords.map((item) => item.id));
+    setAttendanceRecords((current) => current.filter((item) => !recordIds.has(item.id)));
+    return matchingRecords.length;
+  };
+
   const clearAttendanceRange = async (startMonth: string, endMonth: string, department: Department | 'all' = 'all'): Promise<number> => {
     requireDatabaseAccess();
     const fromMonth = startMonth <= endMonth ? startMonth : endMonth;
@@ -781,6 +802,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bulkImportStudents,
         bulkUpdateStudents,
         saveAttendanceBatch,
+        deleteStudentAttendance,
         clearAttendanceRange,
         deleteAttendanceSessions,
         addCallLog,
