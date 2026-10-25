@@ -35,7 +35,6 @@ export interface AttendanceRecord {
   id: string;
   sessionId?: string;
   date: string; // YYYY-MM-DD
-  timeSlot?: string;
   department: Department;
   semester: Semester;
   subject: string;
@@ -53,7 +52,6 @@ export interface AttendanceRecord {
 export interface AttendanceSession {
   id: string;
   date: string;
-  timeSlot?: string;
   department: Department;
   semester: Semester;
   subject: string;

@@ -51,7 +51,6 @@ interface AttendanceFilter {
   section: Section;
   subject: string;
   date: string;
-  timeSlot: string;
 }
 
 interface AppContextType {
@@ -158,7 +157,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     section: 'A',
     subject: '',
     date: todayDate,
-    timeSlot: '09:00 AM - 09:45 AM',
   });
 
   // Auth & Google Sheets State

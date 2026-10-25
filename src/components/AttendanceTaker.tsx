@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   CheckCircle2, 
   XCircle, 
@@ -27,6 +27,7 @@ import { GuardianCallModal } from './GuardianCallModal';
 export const AttendanceTaker: React.FC = () => {
   const { 
     students, 
+    attendanceRecords,
     departments,
     filter, 
     setFilter, 
@@ -42,6 +43,7 @@ export const AttendanceTaker: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [activeCallStudent, setActiveCallStudent] = useState<Student | null>(null);
+  const attendanceSubmitRef = useRef(false);
 
   // Filter students based on selected Department, Semester, Section
   const enrolledStudents = useMemo(() => {
@@ -61,6 +63,18 @@ export const AttendanceTaker: React.FC = () => {
       (s) => s.department === filter.department && s.semester === filter.semester
     );
   }, [subjects, filter.department, filter.semester]);
+
+  const hasExistingAttendance = useMemo(
+    () => attendanceRecords.some(
+      (record) =>
+        record.date === filter.date &&
+        record.department === filter.department &&
+        record.semester === filter.semester &&
+        record.section === filter.section &&
+        record.subject === filter.subject
+    ),
+    [attendanceRecords, filter.date, filter.department, filter.semester, filter.section, filter.subject]
+  );
 
   // Keep filter.subject in sync when available subjects change
   useEffect(() => {
@@ -135,6 +149,7 @@ export const AttendanceTaker: React.FC = () => {
 
   // Submit attendance to Firebase
   const handleSaveAttendance = async () => {
+    if (attendanceSubmitRef.current) return;
     if (enrolledStudents.length === 0) return;
     if (!filter.department || !filter.semester) return;
     const { department, semester } = filter;
@@ -142,6 +157,8 @@ export const AttendanceTaker: React.FC = () => {
       window.alert('Add a subject in Subject Management before taking attendance.');
       return;
     }
+    if (hasExistingAttendance) return;
+    attendanceSubmitRef.current = true;
     setIsSaving(true);
     setSaveSuccessMsg(null);
     try {
@@ -151,7 +168,6 @@ export const AttendanceTaker: React.FC = () => {
         return {
           id: `att_${student.id}_${filter.date}_${Date.now()}`,
           date: filter.date,
-          timeSlot: filter.timeSlot,
           department,
           semester,
           subject: filter.subject,
@@ -174,6 +190,7 @@ export const AttendanceTaker: React.FC = () => {
       const msg = err instanceof Error ? err.message : 'Error saving attendance';
       alert(`Save notice: ${msg}`);
     } finally {
+      attendanceSubmitRef.current = false;
       setIsSaving(false);
     }
   };
@@ -365,6 +382,18 @@ export const AttendanceTaker: React.FC = () => {
         </div>
       )}
 
+      {hasExistingAttendance && (
+        <div
+          role="alert"
+          className="flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-950 shadow-xs"
+        >
+          <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-700" />
+          <p className="text-xs font-medium sm:text-sm">
+            Attendance for this date, department, semester, section, and subject has already been submitted. Duplicate submission is blocked. To correct it, update the existing record from Attendance Reports.
+          </p>
+        </div>
+      )}
+
       {/* Main Attendance Sheet Table */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         {/* Table Top Controls */}
@@ -390,11 +419,17 @@ export const AttendanceTaker: React.FC = () => {
             {/* Save to Firebase Button */}
             <button
               onClick={handleSaveAttendance}
-              disabled={isSaving || enrolledStudents.length === 0 || !filter.department || !filter.semester || !filter.subject}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 shadow-md transition disabled:opacity-50 ml-auto"
+              disabled={isSaving || hasExistingAttendance || databaseStatus.isLoading || enrolledStudents.length === 0 || !filter.department || !filter.semester || !filter.subject}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 shadow-md transition disabled:cursor-not-allowed disabled:opacity-50 ml-auto"
             >
               <Save className="w-4 h-4 text-emerald-400" />
-              <span>{isSaving ? 'Saving to Firebase...' : 'Save Attendance'}</span>
+              <span>
+                {isSaving
+                  ? 'Saving to Firebase...'
+                  : hasExistingAttendance
+                    ? 'Already Submitted'
+                    : 'Save Attendance'}
+              </span>
             </button>
           </div>
         </div>

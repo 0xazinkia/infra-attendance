@@ -11,7 +11,11 @@ import {
   Filter, 
   PhoneCall,
   GraduationCap,
-  MessageSquare
+  MessageSquare,
+  Download,
+  ChevronDown,
+  FileSpreadsheet,
+  FileText,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Student, Department, Semester, Section } from '../types';
@@ -27,6 +31,7 @@ import {
   StudentContactImportScope,
 } from './BulkNumberImportModal';
 import { GuardianCallModal } from './GuardianCallModal';
+import type { StudentRosterExportDetails } from '../services/studentRosterExport';
 
 export const StudentManager: React.FC = () => {
   const {
@@ -58,6 +63,7 @@ export const StudentManager: React.FC = () => {
   const [callModalStudent, setCallModalStudent] = useState<Student | null>(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<'excel' | 'docx' | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -116,6 +122,34 @@ export const StudentManager: React.FC = () => {
       window.alert(error instanceof Error ? error.message : 'Could not delete the selected student records.');
     } finally {
       setIsBulkDeleting(false);
+    }
+  };
+
+  const handleExportRoster = async (format: 'excel' | 'docx') => {
+    if (filteredStudents.length === 0 || exportingFormat) return;
+
+    const details: StudentRosterExportDetails = {
+      department: selectedDept === 'all' ? 'All Departments' : selectedDept,
+      semester: selectedSemester === 'all' ? 'All Semesters' : selectedSemester,
+      section: selectedSection === 'all' ? 'All Sections' : `Section ${selectedSection}`,
+    };
+
+    setExportingFormat(format);
+    try {
+      const { exportStudentRosterToDocx, exportStudentRosterToExcel } = await import('../services/studentRosterExport');
+      if (format === 'excel') {
+        await exportStudentRosterToExcel(filteredStudents, details);
+      } else {
+        await exportStudentRosterToDocx(filteredStudents, details);
+      }
+    } catch (error) {
+      window.alert(
+        error instanceof Error
+          ? `Could not export the student roster: ${error.message}`
+          : 'Could not export the student roster.'
+      );
+    } finally {
+      setExportingFormat(null);
     }
   };
 
@@ -245,8 +279,8 @@ export const StudentManager: React.FC = () => {
     <div className="space-y-6">
       {/* Top Banner & Metric summary */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-100">
-          <div>
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 pb-4 border-b border-slate-100">
+          <div className="lg:min-w-[260px] lg:flex-1">
             <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
               <Users className="w-5 h-5 text-emerald-600" />
               <span>Student & Guardian Directory (CRUD Portal)</span>
@@ -256,36 +290,75 @@ export const StudentManager: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 lg:flex-nowrap lg:justify-end">
+            <details className="group relative">
+              <summary
+                aria-label="Export student roster"
+                className="flex cursor-pointer list-none items-center gap-1 rounded-xl bg-slate-100 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-200 [&::-webkit-details-marker]:hidden"
+              >
+                <Download className="h-4 w-4" />
+                <span>{exportingFormat ? 'Preparing...' : 'Export'}</span>
+                <ChevronDown className="h-3.5 w-3.5 transition group-open:rotate-180" />
+              </summary>
+              <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open');
+                    void handleExportRoster('excel');
+                  }}
+                  disabled={filteredStudents.length === 0 || exportingFormat !== null}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-medium text-slate-700 transition hover:bg-emerald-50 hover:text-emerald-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <FileSpreadsheet className="h-4 w-4 text-emerald-700" />
+                  Export as Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open');
+                    void handleExportRoster('docx');
+                  }}
+                  disabled={filteredStudents.length === 0 || exportingFormat !== null}
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-medium text-slate-700 transition hover:bg-blue-50 hover:text-blue-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <FileText className="h-4 w-4 text-blue-700" />
+                  Export as DOCX
+                </button>
+              </div>
+            </details>
             <button
               onClick={() => void handleDeleteSelected()}
               disabled={selectedStudentIds.length === 0 || isBulkDeleting}
               title="Permanently delete selected student records"
-              className="flex items-center gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex items-center gap-1 rounded-xl bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <Trash2 className="h-4 w-4" />
-              <span>{isBulkDeleting ? 'Deleting...' : `Delete selected (${selectedStudentIds.length})`}</span>
+              <Trash2 className="h-3.5 w-3.5 shrink-0" />
+              <span className="whitespace-nowrap">{isBulkDeleting ? 'Deleting...' : `Delete (${selectedStudentIds.length})`}</span>
             </button>
             <button
               onClick={() => setIsBulkOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition"
+              title="Bulk CSV Import"
+              className="flex items-center gap-1 rounded-xl bg-slate-100 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-200"
             >
-              <UploadCloud className="w-4 h-4 text-slate-500" />
-              <span>Bulk CSV Import</span>
+              <UploadCloud className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+              <span className="whitespace-nowrap">CSV Import</span>
             </button>
             <button
               onClick={() => setIsBulkNumberOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition"
+              title="Bulk Number Import"
+              className="flex items-center gap-1 rounded-xl bg-slate-100 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-200"
             >
-              <Phone className="w-4 h-4 text-slate-500" />
-              <span>Bulk Number Import</span>
+              <Phone className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+              <span className="whitespace-nowrap">Number Import</span>
             </button>
             <button
               onClick={handleOpenAdd}
-              className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition"
+              title="Add New Student"
+              className="flex items-center gap-1 rounded-xl bg-emerald-600 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-md transition hover:bg-emerald-700"
             >
-              <UserPlus className="w-4 h-4" />
-              <span>Add New Student</span>
+              <UserPlus className="h-3.5 w-3.5 shrink-0" />
+              <span className="whitespace-nowrap">Add Student</span>
             </button>
           </div>
         </div>

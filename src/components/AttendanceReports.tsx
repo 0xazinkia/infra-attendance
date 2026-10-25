@@ -25,6 +25,15 @@ import { SEMESTERS, SECTIONS } from '../data/mockData';
 import { Department, Semester, Section, Student, AttendanceRecord } from '../types';
 import { GuardianCallModal, MonthlyAttendanceSummary } from './GuardianCallModal';
 
+const latestAttendanceByDate = (records: AttendanceRecord[]) => {
+  const byDate = new Map<string, AttendanceRecord>();
+  records.forEach((record) => {
+    const current = byDate.get(record.date);
+    if (!current || record.recordedAt >= current.recordedAt) byDate.set(record.date, record);
+  });
+  return Array.from(byDate.values()).sort((first, second) => first.date.localeCompare(second.date));
+};
+
 export const AttendanceReports: React.FC = () => {
   const { students, attendanceRecords, subjects, departments, saveAttendanceBatch, deleteAttendanceSessions } = useApp();
 
@@ -223,13 +232,21 @@ export const AttendanceReports: React.FC = () => {
       record.section === selectedSection &&
       record.subject === selectedSubject
     );
-    const missingStudentRecords: AttendanceRecord[] = students
+    const rosterStudents = students
       .filter((student) =>
         student.department === selectedDept &&
         student.semester === selectedSemester &&
-        student.section === selectedSection &&
-        !recordsForDate.some((record) => record.studentId === student.id || record.roll === student.roll)
-      )
+        student.section === selectedSection
+      );
+      const latestRecordsByStudent = new Map<string, AttendanceRecord>();
+      recordsForDate.forEach((record) => {
+        const identity = record.studentId || record.roll;
+      const current = latestRecordsByStudent.get(identity);
+      if (!current || record.recordedAt >= current.recordedAt) latestRecordsByStudent.set(identity, record);
+    });
+    const deduplicatedRecords = Array.from(latestRecordsByStudent.values());
+    const missingStudentRecords: AttendanceRecord[] = rosterStudents
+      .filter((student) => !deduplicatedRecords.some((record) => record.studentId === student.id || record.roll === student.roll))
       .map((student) => ({
         id: `missing_${student.id}_${activeSelectedDate}_${selectedSubject}`,
         date: activeSelectedDate,
@@ -244,7 +261,7 @@ export const AttendanceReports: React.FC = () => {
         recordedAt: student.createdAt,
       }));
 
-    return [...recordsForDate, ...missingStudentRecords]
+    return [...deduplicatedRecords, ...missingStudentRecords]
       .sort((a, b) => (Number(a.roll) || 0) - (Number(b.roll) || 0));
   }, [attendanceRecords, students, activeSelectedDate, selectedDept, selectedSemester, selectedSection, selectedSubject]);
 
@@ -282,40 +299,21 @@ export const AttendanceReports: React.FC = () => {
     });
   }, [students, selectedDept, selectedSemester, selectedSection, searchQuery]);
 
-  // Calculate cumulative attendance metrics per student within selected filters & month
-  const studentMetrics = useMemo(() => {
-    return relevantStudents.map((student) => {
-      const studentRecords = attendanceRecords.filter((r) => {
-        const matchStudent = r.studentId === student.id || r.roll === student.roll;
-        const matchMonth = r.date.startsWith(selectedMonth);
-        const matchSub = r.subject === selectedSubject;
-        return matchStudent && matchMonth && matchSub;
-      });
-
-      const totalClasses = studentRecords.length;
-      const presentClasses = studentRecords.filter((r) => r.status === 'present').length;
-      const absentClasses = studentRecords.filter((r) => r.status === 'absent').length;
-      const percentage = totalClasses > 0 ? Math.round((presentClasses / totalClasses) * 100) : 100;
-
-      let btebStatus: 'Collegiate' | 'Non-Collegiate' | 'Discollegiate' = 'Collegiate';
-      if (totalClasses > 0) {
-        if (percentage < 60) btebStatus = 'Discollegiate';
-        else if (percentage < 75) btebStatus = 'Non-Collegiate';
-      }
-
-      return {
-        student,
-        totalClasses,
-        presentClasses,
-        absentClasses,
-        percentage,
-        btebStatus,
-      };
-    });
-  }, [relevantStudents, attendanceRecords, selectedMonth, selectedSubject]);
+  const monthlySessionDates = useMemo(() => Array.from(new Set(
+    attendanceRecords
+      .filter((record) =>
+        record.date.startsWith(selectedMonth) &&
+        record.department === selectedDept &&
+        record.semester === selectedSemester &&
+        record.section === selectedSection &&
+        record.subject === selectedSubject
+      )
+      .map((record) => record.date)
+  )).sort(), [attendanceRecords, selectedMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
 
   const monthlyStudentRows = useMemo(() => relevantStudents.map((student) => {
-    const records = attendanceRecords.filter((record) => {
+    const eligibleSessionDates = monthlySessionDates;
+    const records = latestAttendanceByDate(attendanceRecords.filter((record) => {
       const sameStudent = record.studentId === student.id || record.roll === student.roll;
       const matchesMonth = record.date.startsWith(selectedMonth);
       const matchesDept = record.department === selectedDept;
@@ -323,34 +321,41 @@ export const AttendanceReports: React.FC = () => {
       const matchesSection = record.section === selectedSection;
       const matchesSubject = record.subject === selectedSubject;
       return sameStudent && matchesMonth && matchesDept && matchesSemester && matchesSection && matchesSubject;
-    });
-    const present = records.filter((record) => record.status === 'present').length;
-    const absent = records.filter((record) => record.status === 'absent').length;
-    const presentDates = Array.from(new Set(records.filter((record) => record.status === 'present').map((record) => record.date))).sort();
-    const absentDates = Array.from(new Set(records.filter((record) => record.status === 'absent').map((record) => record.date))).sort();
-    const total = present + absent;
+    }));
+    const presentDates = records
+      .filter((record) => record.status === 'present' && eligibleSessionDates.includes(record.date))
+      .map((record) => record.date);
+    const presentDateSet = new Set(presentDates);
+    const absentDates = eligibleSessionDates.filter((date) => !presentDateSet.has(date));
+    const present = presentDateSet.size;
+    const absent = absentDates.length;
+    const total = eligibleSessionDates.length;
     return { student, present, absent, presentDates, absentDates, total, percentage: total ? Math.round((present / total) * 100) : null };
-  }), [relevantStudents, attendanceRecords, selectedMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
+  }), [relevantStudents, attendanceRecords, monthlySessionDates, selectedMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
 
-  const monthlyClassCount = useMemo(() => {
-    const sessions = new Set<string>();
-    attendanceRecords.forEach((record) => {
-      const matchesMonth = record.date.startsWith(selectedMonth);
-      const matchesDept = record.department === selectedDept;
-      const matchesSemester = record.semester === selectedSemester;
-      const matchesSection = record.section === selectedSection;
-      const matchesSubject = record.subject === selectedSubject;
-      if (matchesMonth && matchesDept && matchesSemester && matchesSection && matchesSubject) {
-        sessions.add(`${record.date}|${record.subject}|${record.timeSlot || ''}`);
-      }
-    });
-    return sessions.size;
-  }, [attendanceRecords, selectedMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
+  const monthlyClassCount = monthlySessionDates.length;
+
+  const overallSessionDates = useMemo(() => {
+    const currentMonth = new Date().toISOString().substring(0, 7);
+    return Array.from(new Set(
+      attendanceRecords
+        .filter((record) =>
+          record.date.substring(0, 7) >= overallStartMonth &&
+          record.date.substring(0, 7) <= currentMonth &&
+          record.department === selectedDept &&
+          record.semester === selectedSemester &&
+          record.section === selectedSection &&
+          record.subject === selectedSubject
+        )
+        .map((record) => record.date)
+    )).sort();
+  }, [attendanceRecords, overallStartMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
 
   const overallAttendanceRows = useMemo(() => {
     const currentMonth = new Date().toISOString().substring(0, 7);
     return relevantStudents.map((student) => {
-      const records = attendanceRecords.filter((record) =>
+      const eligibleSessionDates = overallSessionDates;
+      const records = latestAttendanceByDate(attendanceRecords.filter((record) =>
         (record.studentId === student.id || record.roll === student.roll) &&
         record.date.substring(0, 7) >= overallStartMonth &&
         record.date.substring(0, 7) <= currentMonth &&
@@ -358,21 +363,25 @@ export const AttendanceReports: React.FC = () => {
         record.semester === selectedSemester &&
         record.section === selectedSection &&
         record.subject === selectedSubject
+      ));
+      const presentDates = new Set(
+        records.filter((record) => record.status === 'present').map((record) => record.date)
       );
       const monthStats = new Map<string, { present: number; total: number }>();
-      records.forEach((record) => {
-        const month = record.date.substring(0, 7);
+      eligibleSessionDates.forEach((date) => {
+        const month = date.substring(0, 7);
         const stats = monthStats.get(month) || { present: 0, total: 0 };
         stats.total += 1;
-        if (record.status === 'present') stats.present += 1;
+        if (presentDates.has(date)) stats.present += 1;
         monthStats.set(month, stats);
       });
       const monthlyRates = Array.from(monthStats.values()).map((stats) => (stats.present / stats.total) * 100);
-      const present = records.filter((record) => record.status === 'present').length;
-      const absent = records.filter((record) => record.status === 'absent').length;
+      const present = presentDates.size;
+      const total = eligibleSessionDates.length;
+      const absent = total - present;
       return {
         student,
-        total: present + absent,
+        total,
         present,
         absent,
         averagePercentage: monthlyRates.length
@@ -381,7 +390,7 @@ export const AttendanceReports: React.FC = () => {
         monthsCounted: monthlyRates.length,
       };
     });
-  }, [relevantStudents, attendanceRecords, overallStartMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
+  }, [relevantStudents, attendanceRecords, overallSessionDates, overallStartMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
 
   const overallAveragePercentage = useMemo(() => {
     const rowsWithAttendance = overallAttendanceRows.filter((row) => row.averagePercentage !== null);
@@ -976,14 +985,24 @@ export const AttendanceReports: React.FC = () => {
                               className="rounded-md bg-rose-50 px-2.5 py-1 font-mono font-bold text-rose-800 hover:bg-rose-100 disabled:cursor-default disabled:bg-transparent disabled:text-rose-700"
                             >{absent}</button>
                           </td>
-                          <td className="border-b border-r border-slate-100 px-2 py-3 text-center font-mono font-bold text-slate-800">{percentage === null ? 'N/A' : `${percentage}%`}</td>
+                          <td className="border-b border-r border-slate-100 px-2 py-3 text-center">
+                            <span className={`rounded-md px-2.5 py-1 font-mono font-bold ${
+                              percentage === null
+                                ? 'text-slate-400'
+                                : percentage >= 75
+                                  ? 'bg-emerald-50 text-emerald-800'
+                                  : 'bg-rose-50 text-rose-800'
+                            }`}>
+                              {percentage === null ? 'N/A' : `${percentage}%`}
+                            </span>
+                          </td>
                           <td className="sticky right-0 z-10 border-b border-slate-100 bg-white px-2 py-2 text-center">
                             <button
                               type="button"
                               onClick={() => {
                                 setMonthlyCallSummary({
                                   month: selectedMonth,
-                                  classesHeld: monthlyClassCount,
+                                  classesHeld: total,
                                   present,
                                   absent,
                                   absentDates,
@@ -993,7 +1012,15 @@ export const AttendanceReports: React.FC = () => {
                                 setCallStudent(student);
                               }}
                               title={`Contact guardian ${student.guardianName} at ${student.guardianPhone}`}
-                              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1.5 font-semibold text-emerald-800 hover:bg-emerald-100"
+                              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-semibold ${
+                                percentage === null
+                                  ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                  : percentage < 30
+                                    ? 'bg-slate-900 text-white hover:bg-slate-800'
+                                    : percentage < 75
+                                      ? 'bg-rose-50 text-rose-800 hover:bg-rose-100'
+                                      : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                              }`}
                             >
                               <PhoneCall className="h-3.5 w-3.5" />
                               <span>Contact</span>

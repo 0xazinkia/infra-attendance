@@ -112,7 +112,7 @@ export async function saveDocuments<T extends { id: string }>(
 
 export function getAttendanceSessionId(record: Pick<
   AttendanceRecord,
-  'date' | 'department' | 'semester' | 'section' | 'subject' | 'timeSlot'
+  'date' | 'department' | 'semester' | 'section' | 'subject'
 >): string {
   const key = JSON.stringify([
     record.date,
@@ -120,7 +120,6 @@ export function getAttendanceSessionId(record: Pick<
     record.semester,
     record.section,
     record.subject,
-    record.timeSlot || '',
   ]);
   return `session_${encodeURIComponent(key)}`;
 }
@@ -149,7 +148,6 @@ export async function fetchAttendanceRecords(): Promise<AttendanceRecord[]> {
       id: `${session.id}_${encodeURIComponent(String(entry.studentId))}`,
       sessionId: session.id,
       date: session.date,
-      timeSlot: session.timeSlot,
       department: session.department,
       semester: session.semester,
       subject: session.subject,
@@ -170,7 +168,6 @@ export async function saveAttendanceRecords(records: AttendanceRecord[]): Promis
       session: {
         id: sessionId,
         date: record.date,
-        timeSlot: record.timeSlot || '',
         department: record.department,
         semester: record.semester,
         subject: record.subject,
@@ -218,7 +215,6 @@ export async function saveAttendanceSessionMetadata(records: AttendanceRecord[])
     sessions.set(id, {
       id,
       date: record.date,
-      timeSlot: record.timeSlot || '',
       department: record.department,
       semester: record.semester,
       subject: record.subject,
