@@ -189,7 +189,7 @@ export const GuardianCallModal: React.FC<GuardianCallModalProps> = ({
                     <User className="w-3.5 h-3.5 text-slate-400" />
                     <span>Student Mobile: {student.studentPhone}</span>
                     <a
-                      href={`tel:${student.studentPhone}`}
+                      href={`callto:${student.studentPhone}`}
                       className="text-emerald-600 hover:underline font-medium text-[11px]"
                     >
                       (Call)
@@ -218,7 +218,7 @@ export const GuardianCallModal: React.FC<GuardianCallModalProps> = ({
               {/* Direct Calling Buttons */}
               <div className="mt-3 flex items-center gap-2">
                 <a
-                  href={`tel:${student.guardianPhone}`}
+                  href={`callto:${student.guardianPhone}`}
                   className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-3 rounded-lg text-xs transition shadow-sm"
                 >
                   <Phone className="w-4 h-4" />

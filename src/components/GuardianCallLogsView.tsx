@@ -160,7 +160,7 @@ export const GuardianCallLogsView: React.FC = () => {
                     </td>
                     <td className="py-3 px-4 text-center">
                       <a
-                        href={`tel:${log.guardianPhone}`}
+                        href={`callto:${log.guardianPhone}`}
                         title="Call again"
                         className="p-1.5 inline-flex items-center justify-center rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition"
                       >

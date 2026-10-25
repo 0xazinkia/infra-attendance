@@ -543,7 +543,7 @@ export const StudentManager: React.FC = () => {
                     <td className="py-3 px-4 font-mono">
                       {student.studentPhone ? (
                         <a
-                          href={`tel:${student.studentPhone}`}
+                          href={`callto:${student.studentPhone}`}
                           className="flex items-center gap-1 text-slate-700 hover:text-emerald-700"
                         >
                           <Phone className="w-3 h-3 text-slate-400" />
@@ -573,7 +573,7 @@ export const StudentManager: React.FC = () => {
                         {student.guardianPhone && (
                           <div className="flex items-center gap-1">
                             <a
-                              href={`tel:${student.guardianPhone}`}
+                              href={`callto:${student.guardianPhone}`}
                               title={`Direct Call Guardian (${student.guardianName})`}
                               className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition"
                             >

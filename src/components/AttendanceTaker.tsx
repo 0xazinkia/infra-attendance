@@ -490,7 +490,7 @@ export const AttendanceTaker: React.FC = () => {
                         <div className="flex items-center gap-2 mt-0.5">
                           {student.studentPhone && (
                             <a
-                              href={`tel:${student.studentPhone}`}
+                              href={`callto:${student.studentPhone}`}
                               className="text-[11px] text-slate-500 hover:text-emerald-700 flex items-center gap-1"
                               title="Call student"
                             >
@@ -525,7 +525,7 @@ export const AttendanceTaker: React.FC = () => {
                           {student.guardianPhone ? (
                             <div className="flex items-center gap-1">
                               <a
-                                href={`tel:${student.guardianPhone}`}
+                                href={`callto:${student.guardianPhone}`}
                                 title={`Call Guardian (${student.guardianName})`}
                                 className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition"
                               >
