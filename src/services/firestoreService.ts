@@ -152,6 +152,7 @@ export async function fetchAttendanceRecords(): Promise<AttendanceRecord[]> {
       semester: session.semester,
       subject: session.subject,
       section: session.section,
+      ...(session.sessionReason ? { sessionReason: session.sessionReason } : {}),
     } as AttendanceRecord;
   });
 }
@@ -167,6 +168,7 @@ export async function saveAttendanceRecords(records: AttendanceRecord[]): Promis
     const group = grouped.get(sessionId) || {
       session: {
         id: sessionId,
+        ...(record.sessionReason ? { sessionReason: record.sessionReason } : {}),
         date: record.date,
         department: record.department,
         semester: record.semester,
@@ -214,6 +216,7 @@ export async function saveAttendanceSessionMetadata(records: AttendanceRecord[])
     const id = record.sessionId || getAttendanceSessionId(record);
     sessions.set(id, {
       id,
+      ...(record.sessionReason ? { sessionReason: record.sessionReason } : {}),
       date: record.date,
       department: record.department,
       semester: record.semester,

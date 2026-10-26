@@ -40,6 +40,9 @@ export const AttendanceTaker: React.FC = () => {
 
   // Local state for current attendance sheet taking
   const [attendanceState, setAttendanceState] = useState<Record<string, { status?: AttendanceStatus; remarks?: string }>>({});
+  const [classNotHeld, setClassNotHeld] = useState(false);
+  const [sessionReasonType, setSessionReasonType] = useState<'student-absent' | 'holiday' | 'other'>('student-absent');
+  const [customSessionReason, setCustomSessionReason] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [activeCallStudent, setActiveCallStudent] = useState<Student | null>(null);
@@ -88,6 +91,12 @@ export const AttendanceTaker: React.FC = () => {
     }
   }, [availableSubjects, filter.subject, setFilter]);
 
+  useEffect(() => {
+    setClassNotHeld(false);
+    setSessionReasonType('student-absent');
+    setCustomSessionReason('');
+  }, [filter.date, filter.department, filter.semester, filter.section, filter.subject]);
+
   // Attendance is present only when explicitly selected; an unselected row is absent.
   useEffect(() => {
     setAttendanceState((prev) => {
@@ -111,10 +120,14 @@ export const AttendanceTaker: React.FC = () => {
       else absent++;
     });
 
-    const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
+    if (classNotHeld) {
+      present = 0;
+      absent = 0;
+    }
+    const percentage = !classNotHeld && total > 0 ? Math.round((present / total) * 100) : 0;
 
     return { total, present, absent, percentage };
-  }, [enrolledStudents, attendanceState]);
+  }, [enrolledStudents, attendanceState, classNotHeld]);
 
   const handleStatusChange = (studentId: string, status: AttendanceStatus) => {
     setAttendanceState((prev) => ({
@@ -157,16 +170,24 @@ export const AttendanceTaker: React.FC = () => {
       window.alert('Add a subject in Subject Management before taking attendance.');
       return;
     }
+    if (classNotHeld && sessionReasonType !== 'student-absent' && !customSessionReason.trim()) {
+      window.alert('Please specify why the class was not held.');
+      return;
+    }
     if (hasExistingAttendance) return;
     attendanceSubmitRef.current = true;
     setIsSaving(true);
     setSaveSuccessMsg(null);
     try {
       const timestamp = new Date().toISOString();
+      const sessionReason = sessionReasonType === 'student-absent'
+        ? 'Student Absent'
+        : `${sessionReasonType === 'holiday' ? 'Holiday' : 'Other'}: ${customSessionReason.trim()}`;
       const recordsToSave: AttendanceRecord[] = enrolledStudents.map((student) => {
         const entry = attendanceState[student.id] || {};
         return {
           id: `att_${student.id}_${filter.date}_${Date.now()}`,
+          sessionReason: classNotHeld ? sessionReason : undefined,
           date: filter.date,
           department,
           semester,
@@ -184,7 +205,9 @@ export const AttendanceTaker: React.FC = () => {
 
       await saveAttendanceBatch(recordsToSave);
 
-      setSaveSuccessMsg(`Attendance for ${recordsToSave.length} students saved to Firebase.`);
+      setSaveSuccessMsg(classNotHeld
+        ? `No-class reason for ${filter.date} saved to Firebase.`
+        : `Attendance for ${recordsToSave.length} students saved to Firebase.`);
       setTimeout(() => setSaveSuccessMsg(null), 5000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error saving attendance';
@@ -356,17 +379,19 @@ export const AttendanceTaker: React.FC = () => {
         <div className="bg-slate-900 text-white p-3.5 rounded-xl shadow-xs flex items-center justify-between">
           <div>
             <span className="text-[11px] font-semibold text-slate-400 uppercase">Rate</span>
-            <p className="text-xl font-bold text-emerald-400 mt-0.5">{stats.percentage}%</p>
+            <p className="text-xl font-bold text-emerald-400 mt-0.5">{classNotHeld ? 'N/A' : `${stats.percentage}%`}</p>
           </div>
           <div className="text-right">
             <span
               className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                stats.percentage >= 75
+                classNotHeld
+                  ? 'bg-amber-500/20 text-amber-300'
+                  : stats.percentage >= 75
                   ? 'bg-emerald-500/20 text-emerald-300'
                   : 'bg-rose-500/20 text-rose-300'
               }`}
             >
-              {stats.percentage >= 75 ? 'Optimal' : '<75% Low'}
+              {classNotHeld ? 'No class held' : stats.percentage >= 75 ? 'Optimal' : '<75% Low'}
             </span>
           </div>
         </div>
@@ -389,10 +414,69 @@ export const AttendanceTaker: React.FC = () => {
         >
           <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-700" />
           <p className="text-xs font-medium sm:text-sm">
-            Attendance for this date, department, semester, section, and subject has already been submitted. Duplicate submission is blocked. To correct it, update the existing record from Attendance Reports.
+            Attendance has already been recorded for this class on this date.
           </p>
         </div>
       )}
+
+      <div className={`rounded-xl border p-4 shadow-xs ${classNotHeld ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white'}`}>
+        <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-800">
+          <input
+            type="checkbox"
+            checked={classNotHeld}
+            onChange={(event) => setClassNotHeld(event.target.checked)}
+            className="h-4 w-4 accent-amber-600"
+          />
+          Class was not held today
+        </label>
+        {classNotHeld && (
+          <div className="mt-3 space-y-2">
+            <p className="text-xs font-semibold text-slate-700">Select a reason</p>
+            {([
+              { value: 'student-absent', label: 'Student Absent' },
+              { value: 'holiday', label: 'Holiday' },
+              { value: 'other', label: 'Other' },
+            ] as const).map((option) => (
+              <label
+                key={option.value}
+                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
+                  sessionReasonType === option.value
+                    ? 'border-amber-400 bg-amber-100 font-semibold text-amber-900'
+                    : 'border-amber-200 bg-white text-slate-700 hover:bg-amber-50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="session-reason-type"
+                  value={option.value}
+                  checked={sessionReasonType === option.value}
+                  onChange={() => setSessionReasonType(option.value)}
+                  className="h-4 w-4 accent-amber-600"
+                />
+                {option.label}
+              </label>
+            ))}
+            {sessionReasonType !== 'student-absent' && (
+              <div>
+                <label htmlFor="session-reason-detail" className="mb-1 block text-xs font-semibold text-slate-700">
+                  {sessionReasonType === 'holiday' ? 'Holiday details (required)' : 'Please specify (required)'}
+                </label>
+                <textarea
+                  id="session-reason-detail"
+                  value={customSessionReason}
+                  onChange={(event) => setCustomSessionReason(event.target.value)}
+                  placeholder={sessionReasonType === 'holiday' ? 'e.g. Eid-ul-Fitr holiday' : 'Enter the reason the class was not held'}
+                  rows={2}
+                  className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            )}
+            <p className="mt-1 text-[11px] text-amber-800">
+              Student attendance will not be counted for this date.
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* Main Attendance Sheet Table */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -411,6 +495,7 @@ export const AttendanceTaker: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => handleMarkAll('present')}
+              disabled={classNotHeld}
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-100 hover:bg-emerald-200 text-emerald-800 transition"
             >
               <CheckCheck className="w-3.5 h-3.5" />
@@ -419,7 +504,7 @@ export const AttendanceTaker: React.FC = () => {
             {/* Save to Firebase Button */}
             <button
               onClick={handleSaveAttendance}
-              disabled={isSaving || hasExistingAttendance || databaseStatus.isLoading || enrolledStudents.length === 0 || !filter.department || !filter.semester || !filter.subject}
+              disabled={isSaving || hasExistingAttendance || databaseStatus.isLoading || enrolledStudents.length === 0 || !filter.department || !filter.semester || !filter.subject || (classNotHeld && sessionReasonType !== 'student-absent' && !customSessionReason.trim())}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 shadow-md transition disabled:cursor-not-allowed disabled:opacity-50 ml-auto"
             >
               <Save className="w-4 h-4 text-emerald-400" />
@@ -428,7 +513,9 @@ export const AttendanceTaker: React.FC = () => {
                   ? 'Saving to Firebase...'
                   : hasExistingAttendance
                     ? 'Already Submitted'
-                    : 'Save Attendance'}
+                    : classNotHeld
+                      ? 'Save No-Class Reason'
+                      : 'Save Attendance'}
               </span>
             </button>
           </div>
@@ -467,7 +554,7 @@ export const AttendanceTaker: React.FC = () => {
                     <tr
                       key={student.id}
                       className={`transition ${
-                        isCurrentAbsent
+                        !classNotHeld && isCurrentAbsent
                           ? 'bg-rose-50/40 hover:bg-rose-50/70'
                           : 'hover:bg-slate-50/80'
                       }`}
@@ -547,7 +634,9 @@ export const AttendanceTaker: React.FC = () => {
 
                       {/* Status Buttons */}
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-2">
+                        {classNotHeld ? (
+                          <span className="text-xs font-semibold text-amber-700">No class held</span>
+                        ) : <div className="flex items-center gap-2">
                           {/* Present */}
                           <button
                             type="button"
@@ -562,7 +651,7 @@ export const AttendanceTaker: React.FC = () => {
                             <span>Present</span>
                           </button>
 
-                        </div>
+                        </div>}
                       </td>
 
                       {/* Note / Remarks */}
@@ -571,6 +660,7 @@ export const AttendanceTaker: React.FC = () => {
                           type="text"
                           value={currentEntry.remarks || ''}
                           onChange={(e) => handleRemarkChange(student.id, e.target.value)}
+                          disabled={classNotHeld}
                           placeholder="Optional note..."
                           className="w-full text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1 text-slate-700 focus:bg-white focus:ring-1 focus:ring-emerald-500 focus:outline-none"
                         />
@@ -594,11 +684,11 @@ export const AttendanceTaker: React.FC = () => {
             <div className="flex items-center gap-3">
               <button
                 onClick={handleSaveAttendance}
-                disabled={isSaving || !filter.subject}
+                disabled={isSaving || hasExistingAttendance || !filter.subject || (classNotHeld && sessionReasonType !== 'student-absent' && !customSessionReason.trim())}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 shadow-md transition disabled:opacity-50"
               >
                 <Save className="w-4 h-4 text-emerald-400" />
-                <span>{isSaving ? 'Saving to Firebase...' : 'Save Attendance'}</span>
+                <span>{isSaving ? 'Saving to Firebase...' : classNotHeld ? 'Save No-Class Reason' : 'Save Attendance'}</span>
               </button>
             </div>
           </div>

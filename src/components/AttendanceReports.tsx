@@ -3,6 +3,7 @@ import {
   BarChart3, 
   Calendar, 
   FileSpreadsheet, 
+  LoaderCircle,
   CheckCircle2, 
   XCircle,
   PhoneCall, 
@@ -24,6 +25,7 @@ import { useApp } from '../context/AppContext';
 import { SEMESTERS, SECTIONS } from '../data/mockData';
 import { Department, Semester, Section, Student, AttendanceRecord } from '../types';
 import { GuardianCallModal, MonthlyAttendanceSummary } from './GuardianCallModal';
+import { exportAttendanceSheetToExcel } from '../services/attendanceReportExport';
 
 const latestAttendanceByDate = (records: AttendanceRecord[]) => {
   const byDate = new Map<string, AttendanceRecord>();
@@ -57,6 +59,10 @@ export const AttendanceReports: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [reportTab, setReportTab] = useState<'daily' | 'monthly' | 'overall'>('daily');
   const [overallStartMonth, setOverallStartMonth] = useState(() => new Date().toISOString().substring(0, 7));
+  const [exportRangeStart, setExportRangeStart] = useState(selectedMonth);
+  const [exportRangeEnd, setExportRangeEnd] = useState(selectedMonth);
+  const [exportRangeEnabled, setExportRangeEnabled] = useState(false);
+  const [isExportingAttendance, setIsExportingAttendance] = useState(false);
   const [expandedStatusDates, setExpandedStatusDates] = useState<{ studentId: string; status: 'present' | 'absent' } | null>(null);
 
   // Selected Date state for date-wise attendance inspection
@@ -195,6 +201,7 @@ export const AttendanceReports: React.FC = () => {
         total: number;
         present: number;
         absent: number;
+        sessionReason?: string;
         subjects: Set<string>;
         sections: Set<string>;
         departments: Set<string>;
@@ -217,6 +224,7 @@ export const AttendanceReports: React.FC = () => {
             total: 0,
             present: 0,
             absent: 0,
+            sessionReason: r.sessionReason,
             subjects: new Set(),
             sections: new Set(),
             departments: new Set(),
@@ -224,9 +232,13 @@ export const AttendanceReports: React.FC = () => {
           });
         }
         const item = map.get(r.date)!;
-        item.total++;
-        if (r.status === 'present') item.present++;
-        else if (r.status === 'absent') item.absent++;
+        if (r.sessionReason?.trim()) {
+          item.sessionReason = r.sessionReason.trim();
+        } else {
+          item.total++;
+          if (r.status === 'present') item.present++;
+          else if (r.status === 'absent') item.absent++;
+        }
 
         if (r.subject) item.subjects.add(r.subject);
         if (r.section) item.sections.add(r.section);
@@ -258,6 +270,8 @@ export const AttendanceReports: React.FC = () => {
       record.section === selectedSection &&
       record.subject === selectedSubject
     );
+    if (recordsForDate.some((record) => record.sessionReason?.trim())) return [];
+
     const rosterStudents = students
       .filter((student) =>
         student.department === selectedDept &&
@@ -291,6 +305,15 @@ export const AttendanceReports: React.FC = () => {
       .sort((a, b) => (Number(a.roll) || 0) - (Number(b.roll) || 0));
   }, [attendanceRecords, students, activeSelectedDate, selectedDept, selectedSemester, selectedSection, selectedSubject]);
 
+  const activeSessionReason = useMemo(() => attendanceRecords.find((record) =>
+    record.date === activeSelectedDate &&
+    record.department === selectedDept &&
+    record.semester === selectedSemester &&
+    record.section === selectedSection &&
+    record.subject === selectedSubject &&
+    record.sessionReason?.trim()
+  )?.sessionReason, [attendanceRecords, activeSelectedDate, selectedDept, selectedSemester, selectedSection, selectedSubject]);
+
   const selectedDateAttendance = useMemo(() => activeDateRecords.filter((record) => {
     const matchStatus = dateFilterStatus === 'all' || record.status === dateFilterStatus;
     const matchSearch =
@@ -302,7 +325,7 @@ export const AttendanceReports: React.FC = () => {
 
   // Stats for the active selected date
   const activeDateStats = useMemo(() => {
-    if (!activeSelectedDate) return null;
+    if (!activeSelectedDate || activeSessionReason) return null;
 
     const total = activeDateRecords.length;
     const present = activeDateRecords.filter((record) => record.status === 'present').length;
@@ -310,7 +333,7 @@ export const AttendanceReports: React.FC = () => {
     const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
 
     return { total, present, absent, percentage };
-  }, [activeDateRecords, activeSelectedDate]);
+  }, [activeDateRecords, activeSelectedDate, activeSessionReason]);
 
   // Relevant Students for Cumulative Report
   const relevantStudents = useMemo(() => {
@@ -332,7 +355,8 @@ export const AttendanceReports: React.FC = () => {
         record.department === selectedDept &&
         record.semester === selectedSemester &&
         record.section === selectedSection &&
-        record.subject === selectedSubject
+        record.subject === selectedSubject &&
+        !record.sessionReason?.trim()
       )
       .map((record) => record.date)
   )).sort(), [attendanceRecords, selectedMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
@@ -361,6 +385,46 @@ export const AttendanceReports: React.FC = () => {
 
   const monthlyClassCount = monthlySessionDates.length;
 
+  const exportMonths = useMemo(() => [...availableMonths].sort(), [availableMonths]);
+  const exportStudents = useMemo(() => students
+    .filter((student) =>
+      student.department === selectedDept &&
+      student.semester === selectedSemester &&
+      student.section === selectedSection
+    )
+    .sort((first, second) => (Number(first.roll) || 0) - (Number(second.roll) || 0)),
+  [students, selectedDept, selectedSemester, selectedSection]);
+  const exportStartMonth = exportRangeEnabled ? exportRangeStart : selectedMonth;
+  const exportEndMonth = exportRangeEnabled ? exportRangeEnd : selectedMonth;
+  const exportAttendanceRecords = useMemo(() => attendanceRecords.filter((record) =>
+    record.date.substring(0, 7) >= exportStartMonth &&
+    record.date.substring(0, 7) <= exportEndMonth &&
+    record.department === selectedDept &&
+    record.semester === selectedSemester &&
+    record.section === selectedSection &&
+    record.subject === selectedSubject
+  ), [attendanceRecords, exportStartMonth, exportEndMonth, selectedDept, selectedSemester, selectedSection, selectedSubject]);
+
+  const handleExportAttendanceSheet = async () => {
+    if (!selectedDept || !selectedSemester || !selectedSubject || exportAttendanceRecords.length === 0) return;
+
+    setIsExportingAttendance(true);
+    try {
+      await exportAttendanceSheetToExcel(exportStudents, exportAttendanceRecords, {
+        department: selectedDept,
+        semester: selectedSemester,
+        section: selectedSection,
+        subject: selectedSubject,
+        startMonth: exportStartMonth,
+        endMonth: exportEndMonth,
+      });
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Could not export the attendance sheet.');
+    } finally {
+      setIsExportingAttendance(false);
+    }
+  };
+
   const overallSessionDates = useMemo(() => {
     const currentMonth = new Date().toISOString().substring(0, 7);
     return Array.from(new Set(
@@ -371,7 +435,8 @@ export const AttendanceReports: React.FC = () => {
           record.department === selectedDept &&
           record.semester === selectedSemester &&
           record.section === selectedSection &&
-          record.subject === selectedSubject
+          record.subject === selectedSubject &&
+          !record.sessionReason?.trim()
         )
         .map((record) => record.date)
     )).sort();
@@ -642,7 +707,7 @@ export const AttendanceReports: React.FC = () => {
               {isDeletingSessions ? 'Deleting...' : selectedSessionDates.length > 0 ? 'Delete now' : isSelectingSessionDates ? 'Cancel' : 'Clear'}
             </button>
             <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-3 py-1 rounded-lg">
-              {classDatesInMonth.length} {classDatesInMonth.length === 1 ? 'Class Session' : 'Class Sessions'} Found
+              {classDatesInMonth.length} {classDatesInMonth.length === 1 ? 'Day' : 'Days'} Recorded
             </span>
           </div>
         </div>
@@ -697,14 +762,18 @@ export const AttendanceReports: React.FC = () => {
                       </span>
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          isSelected && !isMarkedForDeletion
+                          session.sessionReason
+                            ? isSelected && !isMarkedForDeletion
+                              ? 'bg-amber-900 text-amber-200'
+                              : 'bg-amber-100 text-amber-800'
+                            : isSelected && !isMarkedForDeletion
                             ? 'bg-emerald-900 text-emerald-200'
                             : rate >= 75
                               ? 'bg-emerald-100 text-emerald-800'
                               : 'bg-amber-100 text-amber-800'
                         }`}
                       >
-                        {rate}%
+                        {session.sessionReason ? 'No class' : `${rate}%`}
                       </span>
                     </div>
                   </button>
@@ -779,7 +848,17 @@ export const AttendanceReports: React.FC = () => {
           <div className="overflow-x-auto">
             {selectedDateAttendance.length === 0 ? (
               <div className="p-8 text-center text-slate-500 text-xs">
-                No student records matching status filter &ldquo;{dateFilterStatus}&rdquo; for this date.
+                {activeSessionReason
+                  ? (
+                    <>
+                      Class was not conducted due to{' '}
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-800">
+                        {activeSessionReason}
+                      </span>
+                      . Attendance was not recorded for this session.
+                    </>
+                  )
+                  : `No student records matching status filter "${dateFilterStatus}" for this date.`}
               </div>
             ) : (
               <table className="w-full text-left text-xs">
@@ -969,6 +1048,63 @@ export const AttendanceReports: React.FC = () => {
                 {monthlyClassCount} {monthlyClassCount === 1 ? 'class' : 'classes'}
               </span>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-3 border-b border-slate-200 bg-white p-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="mb-1 block text-[10px] font-bold uppercase text-slate-600">Export period</label>
+                <select
+                  value={exportRangeEnabled ? 'range' : 'month'}
+                  onChange={(event) => setExportRangeEnabled(event.target.value === 'range')}
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800"
+                >
+                  <option value="month">Selected month</option>
+                  <option value="range">Month range</option>
+                </select>
+              </div>
+              {exportRangeEnabled && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-bold uppercase text-slate-600">From month</label>
+                    <select
+                      value={exportRangeStart}
+                      onChange={(event) => {
+                        const month = event.target.value;
+                        setExportRangeStart(month);
+                        if (exportRangeEnd < month) setExportRangeEnd(month);
+                      }}
+                      className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800"
+                    >
+                      {exportMonths.map((month) => <option key={month} value={month}>{formatMonthName(month)}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-bold uppercase text-slate-600">To month</label>
+                    <select
+                      value={exportRangeEnd}
+                      onChange={(event) => setExportRangeEnd(event.target.value)}
+                      className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800"
+                    >
+                      {exportMonths.filter((month) => month >= exportRangeStart).map((month) => (
+                        <option key={month} value={month}>{formatMonthName(month)}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleExportAttendanceSheet()}
+              disabled={isExportingAttendance || exportStudents.length === 0 || exportAttendanceRecords.length === 0}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isExportingAttendance
+                ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                : <FileSpreadsheet className="h-4 w-4" />}
+              {isExportingAttendance ? 'Preparing Excel file...' : 'Export attendance sheet to Excel'}
+            </button>
           </div>
 
           {monthlyStudentRows.length === 0 ? (

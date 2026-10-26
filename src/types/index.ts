@@ -34,6 +34,7 @@ export interface Student {
 export interface AttendanceRecord {
   id: string;
   sessionId?: string;
+  sessionReason?: string;
   date: string; // YYYY-MM-DD
   department: Department;
   semester: Semester;
@@ -51,6 +52,7 @@ export interface AttendanceRecord {
 
 export interface AttendanceSession {
   id: string;
+  sessionReason?: string;
   date: string;
   department: Department;
   semester: Semester;
